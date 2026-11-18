@@ -13,6 +13,7 @@ jobs:
 
       - name: Extract ZIP
         run: |
+          mkdir -p extracted_dir
           unzip muezzin_project.zip -d extracted_dir
 
       - name: Set up Flutter
@@ -21,10 +22,12 @@ jobs:
           flutter-version: '3.19.x'
           channel: 'stable'
 
-      - name: Build APK
+      - name: Find Project and Build APK
         run: |
-          cd extracted_dir
-          cd $(ls -d */ | head -n 1)
+          # البحث التلقائي عن المجلد الذي يحتوي على ملف pubspec.yaml
+          PROJECT_DIR=$(find extracted_dir -name "pubspec.yaml" -exec dirname {} \;)
+          echo "Found project at: $PROJECT_DIR"
+          cd "$PROJECT_DIR"
           flutter pub get
           flutter build apk --release
 
@@ -32,4 +35,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: muezzin-apk
-          path: extracted_dir/**/build/app/outputs/flutter-apk/app-release.apk
+          path: '**/build/app/outputs/flutter-apk/app-release.apk'
