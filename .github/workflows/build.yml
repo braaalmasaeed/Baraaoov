@@ -33,6 +33,11 @@ jobs:
             echo "ERROR: lib folder not found in repository or zip!"
             exit 1
           fi
+          if [ -d "flutter_app/lib/Screens" ]; then
+            mkdir -p flutter_app/lib/screens
+            cp -r flutter_app/lib/Screens/* flutter_app/lib/screens/
+            rm -rf flutter_app/lib/Screens
+          fi
           echo "=== Files in flutter_app/lib ==="
           find flutter_app/lib -type f
           PUBSPEC_SOURCE=$(find extracted_dir -maxdepth 6 -type f -name "pubspec.yaml" -print | head -n 1)
@@ -52,6 +57,10 @@ jobs:
             fi
           fi
           cd flutter_app
+          if [ -f "android/app/build.gradle" ]; then
+            sed -i 's/compileSdk = [0-9]*/compileSdk = 35/g' android/app/build.gradle
+            sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 35/g' android/app/build.gradle
+          fi
           flutter pub add shared_preferences
           if [ -f "lib/services/background_prayer_service.dart" ]; then
             sed -i "s|import 'alarm_screen.dart';|import '../screens/alarm_screen.dart';|g" lib/services/background_prayer_service.dart
