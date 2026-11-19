@@ -15,20 +15,21 @@ jobs:
           channel: "stable"
       - run: |
           mkdir -p extracted_dir flutter_app
-          unzip -o muezzin_project.zip -d extracted_dir
+          if [ -f "muezzin_project.zip" ]; then
+            unzip -o muezzin_project.zip -d extracted_dir
+          fi
           flutter create flutter_app --org com.braa.muezzin --project-name muezzin
-          LIB_SOURCE=$(find extracted_dir -type d -name "lib" | head -n 1)
-          if [ -n "$LIB_SOURCE" ]; then cp -r "$LIB_SOURCE"/* flutter_app/lib/; fi
-          echo "import 'package:flutter/material.dart'; import 'screens/home_screen.dart'; void main() { runApp(const MaterialApp(debugShowCheckedModeBanner: false, home: HomeScreen())); }" > flutter_app/lib/main.dart
+          LIB_SOURCE=$(find . -maxdepth 4 -path "./flutter_app" -prune -o -type d -name "lib" -print | head -n 1)
+          echo "Found lib at: $LIB_SOURCE"
+          if [ -n "$LIB_SOURCE" ]; then
+            cp -r "$LIB_SOURCE"/* flutter_app/lib/
+          fi
+          PUBSPEC_SOURCE=$(find . -maxdepth 4 -path "./flutter_app" -prune -o -type f -name "pubspec.yaml" -print | head -n 1)
+          echo "Found pubspec at: $PUBSPEC_SOURCE"
+          if [ -n "$PUBSPEC_SOURCE" ]; then
+            cp "$PUBSPEC_SOURCE" flutter_app/pubspec.yaml
+          fi
           cd flutter_app
-          flutter pub add shared_preferences
-          if [ -f "lib/services/background_prayer_service.dart" ]; then
-            sed -i "s|import 'alarm_screen.dart';|import '../screens/alarm_screen.dart';|g" lib/services/background_prayer_service.dart
-            sed -i 's|import "alarm_screen.dart";|import "../screens/alarm_screen.dart";|g' lib/services/background_prayer_service.dart
-          fi
-          if [ -f "lib/screens/home_screen.dart" ]; then
-            sed -i 's/const Color(/Color(/g' lib/screens/home_screen.dart
-          fi
           flutter pub get
           flutter build apk --release
       - uses: actions/upload-artifact@v4
