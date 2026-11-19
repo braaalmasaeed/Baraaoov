@@ -44,6 +44,14 @@ jobs:
             fi
           fi
           cd flutter_app
+          flutter pub add shared_preferences
+          if [ -f "lib/services/background_prayer_service.dart" ]; then
+            sed -i "s|import 'alarm_screen.dart';|import '../screens/alarm_screen.dart';|g" lib/services/background_prayer_service.dart
+            sed -i 's|import "alarm_screen.dart";|import "../screens/alarm_screen.dart";|g' lib/services/background_prayer_service.dart
+          fi
+          if [ -f "lib/screens/home_screen.dart" ]; then
+            sed -i 's/const Color(stringToColor(/Color(stringToColor(/g' lib/screens/home_screen.dart
+          fi
           flutter pub get
           flutter build apk --release
       - uses: actions/upload-artifact@v4
