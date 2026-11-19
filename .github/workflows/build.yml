@@ -3,6 +3,7 @@ name: Build APK
 on:
   push:
     branches: [ "*" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -11,22 +12,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract ZIP
+      - name: Extract ZIP and List Files
         run: |
           mkdir -p extracted_dir
-          unzip muezzin_project.zip -d extracted_dir
+          unzip -o muezzin_project.zip -d extracted_dir
+          echo "=== قائمة الملفات المستخرجة ==="
+          find extracted_dir -maxdepth 4
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.x'
+          flutter-version: '3.24.x'
           channel: 'stable'
 
-      - name: Find Project and Build APK
+      - name: Build APK
         run: |
-          # البحث التلقائي عن المجلد الذي يحتوي على ملف pubspec.yaml
-          PROJECT_DIR=$(find extracted_dir -name "pubspec.yaml" -exec dirname {} \;)
-          echo "Found project at: $PROJECT_DIR"
+          PUBSPEC_PATH=$(find extracted_dir -name "pubspec.yaml" | head -n 1)
+          if [ -z "$PUBSPEC_PATH" ]; then
+            echo "ERROR: No pubspec.yaml found in muezzin_project.zip"
+            exit 1
+          fi
+          PROJECT_DIR=$(dirname "$PUBSPEC_PATH")
           cd "$PROJECT_DIR"
           flutter pub get
           flutter build apk --release
