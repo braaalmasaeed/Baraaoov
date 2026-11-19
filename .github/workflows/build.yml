@@ -58,8 +58,10 @@ jobs:
           fi
           cd flutter_app
           if [ -f "android/app/build.gradle" ]; then
-            sed -i 's/compileSdk = [0-9]*/compileSdk = 35/g' android/app/build.gradle
-            sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 35/g' android/app/build.gradle
+            sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' android/app/build.gradle
+            sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g' android/app/build.gradle
+            sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 35/g' android/app/build.gradle
+            sed -i 's/compileSdk = [0-9]\+/compileSdk = 35/g' android/app/build.gradle
           fi
           flutter pub add shared_preferences
           if [ -f "lib/services/background_prayer_service.dart" ]; then
