@@ -12,13 +12,39 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.24.x"
-          channel: stable
+          channel: "stable"
       - run: |
           mkdir -p extracted_dir flutter_app
           unzip -o muezzin_project.zip -d extracted_dir
           flutter create flutter_app --org com.braa.muezzin --project-name muezzin
-          if [ -d "extracted_dir/lib" ]; then cp -r extracted_dir/lib/* flutter_app/lib/; fi
-          if [ ! -f "flutter_app/lib/main.dart" ]; then printf 'import "package:flutter/material.dart";\nimport "screens/home_screen.dart";\nvoid main() { runApp(const MaterialApp(debugShowCheckedModeBanner: false, home: HomeScreen())); }\n' > flutter_app/lib/main.dart; fi
+          LIB_SOURCE=$(find extracted_dir -type d -name "lib" | head -n 1)
+          echo "Found lib at: $LIB_SOURCE"
+          if [ -n "$LIB_SOURCE" ]; then
+            cp -r "$LIB_SOURCE"/* flutter_app/lib/
+          fi
+          cat << 'EOF' > flutter_app/lib/main.dart
+import 'package:flutter/material.dart';
+import 'screens/home_screen.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const MuezzinApp());
+}
+
+class MuezzinApp extends StatelessWidget {
+  const MuezzinApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Muezzin',
+      theme: ThemeData.dark(),
+      home: const HomeScreen(),
+    );
+  }
+}
+EOF
           cd flutter_app
           flutter pub get
           flutter build apk --release
