@@ -21,7 +21,10 @@ jobs:
             unzip -o "$ZIP_FILE" -d extracted_dir
           fi
           flutter create flutter_app --org com.braa.muezzin --project-name muezzin
-          LIB_SOURCE=$(find . -maxdepth 5 -not -path "./flutter_app*" -not -path "./.github*" -type d -name "lib" -print | head -n 1)
+          LIB_SOURCE=$(find extracted_dir -maxdepth 6 -type d -name "lib" -print | head -n 1)
+          if [ -z "$LIB_SOURCE" ]; then
+            LIB_SOURCE=$(find . -maxdepth 5 -not -path "./flutter_app*" -not -path "./.github*" -not -path "./extracted_dir*" -type d -name "lib" -print | head -n 1)
+          fi
           echo "LIB_SOURCE=$LIB_SOURCE"
           if [ -n "$LIB_SOURCE" ]; then
             rm -rf flutter_app/lib/*
@@ -30,7 +33,12 @@ jobs:
             echo "ERROR: lib folder not found in repository or zip!"
             exit 1
           fi
-          PUBSPEC_SOURCE=$(find . -maxdepth 5 -not -path "./flutter_app*" -not -path "./.github*" -type f -name "pubspec.yaml" -print | head -n 1)
+          echo "=== Files in flutter_app/lib ==="
+          find flutter_app/lib -type f
+          PUBSPEC_SOURCE=$(find extracted_dir -maxdepth 6 -type f -name "pubspec.yaml" -print | head -n 1)
+          if [ -z "$PUBSPEC_SOURCE" ]; then
+            PUBSPEC_SOURCE=$(find . -maxdepth 5 -not -path "./flutter_app*" -not -path "./.github*" -not -path "./extracted_dir*" -type f -name "pubspec.yaml" -print | head -n 1)
+          fi
           echo "PUBSPEC_SOURCE=$PUBSPEC_SOURCE"
           if [ -n "$PUBSPEC_SOURCE" ]; then
             cp "$PUBSPEC_SOURCE" flutter_app/pubspec.yaml
@@ -49,9 +57,7 @@ jobs:
             sed -i "s|import 'alarm_screen.dart';|import '../screens/alarm_screen.dart';|g" lib/services/background_prayer_service.dart
             sed -i 's|import "alarm_screen.dart";|import "../screens/alarm_screen.dart";|g' lib/services/background_prayer_service.dart
           fi
-          if [ -f "lib/screens/home_screen.dart" ]; then
-            sed -i 's/const Color(stringToColor(/Color(stringToColor(/g' lib/screens/home_screen.dart
-          fi
+          find lib -name "*.dart" -exec sed -i 's/const Color(stringToColor(/Color(stringToColor(/g' {} +
           flutter pub get
           flutter build apk --release
       - uses: actions/upload-artifact@v4
