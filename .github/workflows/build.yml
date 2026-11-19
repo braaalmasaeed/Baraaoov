@@ -1,4 +1,4 @@
-name: Build APK
+APK
 
 on:
   push:
@@ -52,5 +52,3 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: muezzin-apk
-          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
