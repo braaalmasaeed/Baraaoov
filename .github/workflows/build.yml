@@ -64,9 +64,15 @@ jobs:
             sed -i 's/compileSdk = [0-9]\+/compileSdk = 35/g' android/app/build.gradle
           fi
           flutter pub add shared_preferences
+          for scr in home_screen.dart quran_screen.dart azkar_screen.dart settings_screen.dart alarm_screen.dart; do
+            find lib -name "*.dart" -exec sed -i "s|import 'lib/$scr';|import 'screens/$scr';|g" {} +
+            find lib -name "*.dart" -exec sed -i "s|import \"lib/$scr\";|import \"screens/$scr\";|g" {} +
+            find lib -name "*.dart" -exec sed -i "s|import '$scr';|import 'screens/$scr';|g" {} +
+            find lib -name "*.dart" -exec sed -i "s|import \"$scr\";|import \"screens/$scr\";|g" {} +
+          done
           if [ -f "lib/services/background_prayer_service.dart" ]; then
-            sed -i "s|import 'alarm_screen.dart';|import '../screens/alarm_screen.dart';|g" lib/services/background_prayer_service.dart
-            sed -i 's|import "alarm_screen.dart";|import "../screens/alarm_screen.dart";|g' lib/services/background_prayer_service.dart
+            sed -i "s|import 'screens/alarm_screen.dart';|import '../screens/alarm_screen.dart';|g" lib/services/background_prayer_service.dart
+            sed -i 's|import "screens/alarm_screen.dart";|import "../screens/alarm_screen.dart";|g' lib/services/background_prayer_service.dart
           fi
           find lib -name "*.dart" -exec sed -i 's/const Color(stringToColor(/Color(stringToColor(/g' {} +
           flutter pub get
