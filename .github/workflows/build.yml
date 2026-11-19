@@ -35,6 +35,14 @@ jobs:
           if [ -n "$PUBSPEC_SOURCE" ]; then
             cp "$PUBSPEC_SOURCE" flutter_app/pubspec.yaml
           fi
+          if [ ! -f "flutter_app/lib/main.dart" ]; then
+            MAIN_FOUND=$(grep -rl "void main(" flutter_app/lib/ | head -n 1)
+            if [ -n "$MAIN_FOUND" ]; then
+              cp "$MAIN_FOUND" flutter_app/lib/main.dart
+            else
+              echo "import 'package:flutter/material.dart'; import 'screens/home_screen.dart'; void main() { runApp(const MaterialApp(debugShowCheckedModeBanner: false, home: HomeScreen())); }" > flutter_app/lib/main.dart
+            fi
+          fi
           cd flutter_app
           flutter pub get
           flutter build apk --release
