@@ -18,33 +18,8 @@ jobs:
           unzip -o muezzin_project.zip -d extracted_dir
           flutter create flutter_app --org com.braa.muezzin --project-name muezzin
           LIB_SOURCE=$(find extracted_dir -type d -name "lib" | head -n 1)
-          echo "Found lib at: $LIB_SOURCE"
-          if [ -n "$LIB_SOURCE" ]; then
-            cp -r "$LIB_SOURCE"/* flutter_app/lib/
-          fi
-          cat << 'EOF' > flutter_app/lib/main.dart
-import 'package:flutter/material.dart';
-import 'screens/home_screen.dart';
-
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(const MuezzinApp());
-}
-
-class MuezzinApp extends StatelessWidget {
-  const MuezzinApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Muezzin',
-      theme: ThemeData.dark(),
-      home: const HomeScreen(),
-    );
-  }
-}
-EOF
+          if [ -n "$LIB_SOURCE" ]; then cp -r "$LIB_SOURCE"/* flutter_app/lib/; fi
+          echo "import 'package:flutter/material.dart'; import 'screens/home_screen.dart'; void main() { runApp(const MaterialApp(debugShowCheckedModeBanner: false, home: HomeScreen())); }" > flutter_app/lib/main.dart
           cd flutter_app
           flutter pub get
           flutter build apk --release
