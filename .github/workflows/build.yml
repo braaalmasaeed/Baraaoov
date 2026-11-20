@@ -76,6 +76,7 @@ jobs:
             sed -i 's/compileSdk = [0-9]\+/compileSdk = 35/g' android/app/build.gradle
           fi
           flutter pub add shared_preferences
+          find lib -name "*.dart" -exec sed -i "s|settings/settings_screen\.dart|settings_screen.dart|g" {} +
           for scr in home_screen.dart quran_screen.dart azkar_screen.dart settings_screen.dart alarm_screen.dart; do
             find lib -name "*.dart" -exec sed -i "s|import 'lib/$scr';|import 'screens/$scr';|g" {} +
             find lib -name "*.dart" -exec sed -i "s|import \"lib/$scr\";|import \"screens/$scr\";|g" {} +
