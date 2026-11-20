@@ -38,6 +38,15 @@ jobs:
             cp -r flutter_app/lib/Screens/* flutter_app/lib/screens/
             rm -rf flutter_app/lib/Screens
           fi
+          ASSETS_SOURCE=$(find extracted_dir -maxdepth 6 -type d -name "assets" -print | head -n 1)
+          if [ -n "$ASSETS_SOURCE" ]; then
+            mkdir -p flutter_app/assets
+            cp -r "$ASSETS_SOURCE"/* flutter_app/assets/
+          fi
+          ANALYSIS_SOURCE=$(find extracted_dir -maxdepth 6 -type f -name "analysis_options.yaml" -print | head -n 1)
+          if [ -n "$ANALYSIS_SOURCE" ]; then
+            cp "$ANALYSIS_SOURCE" flutter_app/analysis_options.yaml
+          fi
           echo "=== Files in flutter_app/lib ==="
           find flutter_app/lib -type f
           PUBSPEC_SOURCE=$(find extracted_dir -maxdepth 6 -type f -name "pubspec.yaml" -print | head -n 1)
@@ -57,6 +66,28 @@ jobs:
             fi
           fi
           cd flutter_app
+          if [ ! -d "assets" ]; then
+            python3 - <<'PY'
+with open("pubspec.yaml", "r", encoding="utf-8") as f:
+    lines = f.readlines()
+out = []
+skip_assets = False
+for line in lines:
+    stripped = line.lstrip()
+    indent = len(line) - len(stripped)
+    if stripped.startswith("assets:"):
+        skip_assets = True
+        continue
+    if skip_assets:
+        if stripped.startswith("-") or indent > 2 or stripped == "":
+            continue
+        else:
+            skip_assets = False
+    out.append(line)
+with open("pubspec.yaml", "w", encoding="utf-8") as f:
+    f.writelines(out)
+PY
+          fi
           if [ -f "android/app/build.gradle" ]; then
             sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' android/app/build.gradle
             sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g' android/app/build.gradle
