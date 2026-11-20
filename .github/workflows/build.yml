@@ -66,27 +66,8 @@ jobs:
             fi
           fi
           cd flutter_app
-          if [ ! -d "assets" ]; then
-            python3 - <<'PY'
-with open("pubspec.yaml", "r", encoding="utf-8") as f:
-    lines = f.readlines()
-out = []
-skip_assets = False
-for line in lines:
-    stripped = line.lstrip()
-    indent = len(line) - len(stripped)
-    if stripped.startswith("assets:"):
-        skip_assets = True
-        continue
-    if skip_assets:
-        if stripped.startswith("-") or indent > 2 or stripped == "":
-            continue
-        else:
-            skip_assets = False
-    out.append(line)
-with open("pubspec.yaml", "w", encoding="utf-8") as f:
-    f.writelines(out)
-PY
+          if [ ! -d "assets" ] && [ -f "pubspec.yaml" ]; then
+            awk '/^[[:space:]]*assets:/{skip=1; next} skip && /^[[:space:]]*-/{next} skip && /^[[:space:]]+[A-Za-z0-9_\/-]+:/{next} skip && /^[[:space:]]*$/{next} {skip=0; print}' pubspec.yaml > pubspec.tmp && mv pubspec.tmp pubspec.yaml
           fi
           if [ -f "android/app/build.gradle" ]; then
             sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' android/app/build.gradle
