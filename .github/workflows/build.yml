@@ -25,220 +25,43 @@ jobs:
           set -e
           mkdir -p extracted_dir keylink_app
 
-          if [ -f "KeyLink_full.zip" ]; then
-            ZIP_FILE="KeyLink_full.zip"
-          else
-            ZIP_FILE=$(find . -maxdepth 3 -name "*KeyLink*.zip" -printf "%T@ %p\n" | sort -nr | head -n 1 | cut -d' ' -f2-)
-          fi
+          ZIP_FILE="KeyLink_full.zip"
+          [ -f "$ZIP_FILE" ] || ZIP_FILE=$(find . -maxdepth 3 -name "*KeyLink*.zip" | head -n 1)
+          [ -n "$ZIP_FILE" ] && unzip -o "$ZIP_FILE" -d extracted_dir
 
-          echo "ZIP_FILE=$ZIP_FILE"
-          if [ -n "$ZIP_FILE" ] && [ -f "$ZIP_FILE" ]; then
-            unzip -o "$ZIP_FILE" -d extracted_dir
-          fi
-
-          PROJ_ROOT=""
-          if [ -f "extracted_dir/pubspec.yaml" ]; then
-            PROJ_ROOT="extracted_dir"
-          else
-            FOUND_PUBSPEC=$(find extracted_dir -maxdepth 5 -name "pubspec.yaml" -print | head -n 1 || true)
-            if [ -n "$FOUND_PUBSPEC" ]; then
-              PROJ_ROOT=$(dirname "$FOUND_PUBSPEC")
-            elif [ -f "pubspec.yaml" ]; then
-              PROJ_ROOT="."
-            fi
-          fi
-
-          echo "PROJ_ROOT=$PROJ_ROOT"
-          if [ -z "$PROJ_ROOT" ] || [ ! -f "$PROJ_ROOT/pubspec.yaml" ]; then
-            echo "ERROR: KeyLink pubspec.yaml not found!"
-            exit 1
-          fi
+          PROJ_ROOT="extracted_dir"
+          [ -f "extracted_dir/pubspec.yaml" ] || PROJ_ROOT=$(dirname "$(find extracted_dir -maxdepth 5 -name pubspec.yaml | head -n 1)")
+          [ -f "$PROJ_ROOT/pubspec.yaml" ]
 
           flutter create keylink_app --org com.baraa.keylink --project-name keylink
 
-          if [ -d "$PROJ_ROOT/lib" ]; then
-            rm -rf keylink_app/lib/*
-            cp -r "$PROJ_ROOT/lib"/* keylink_app/lib/
-          fi
-
-          if [ -d "$PROJ_ROOT/assets" ]; then
-            mkdir -p keylink_app/assets
-            cp -r "$PROJ_ROOT/assets"/* keylink_app/assets/
-          fi
-
+          [ -d "$PROJ_ROOT/lib" ] && rm -rf keylink_app/lib/* && cp -r "$PROJ_ROOT/lib"/* keylink_app/lib/
+          [ -d "$PROJ_ROOT/assets" ] && mkdir -p keylink_app/assets && cp -r "$PROJ_ROOT/assets"/* keylink_app/assets/
           cp "$PROJ_ROOT/pubspec.yaml" keylink_app/pubspec.yaml
-          if [ -f "$PROJ_ROOT/analysis_options.yaml" ]; then
-            cp "$PROJ_ROOT/analysis_options.yaml" keylink_app/analysis_options.yaml
-          fi
+          [ -f "$PROJ_ROOT/analysis_options.yaml" ] && cp "$PROJ_ROOT/analysis_options.yaml" keylink_app/analysis_options.yaml
+          [ -d "$PROJ_ROOT/android/app/src" ] && rm -rf keylink_app/android/app/src && cp -r "$PROJ_ROOT/android/app/src" keylink_app/android/app/src
+          [ -f "$PROJ_ROOT/android/app/build.gradle" ] && cp "$PROJ_ROOT/android/app/build.gradle" keylink_app/android/app/build.gradle
+          [ -f "$PROJ_ROOT/android/app/build.gradle.kts" ] && cp "$PROJ_ROOT/android/app/build.gradle.kts" keylink_app/android/app/build.gradle.kts
 
-          if [ -d "$PROJ_ROOT/android/app/src" ]; then
-            rm -rf keylink_app/android/app/src
-            cp -r "$PROJ_ROOT/android/app/src" keylink_app/android/app/src
-          fi
-          if [ -f "$PROJ_ROOT/android/app/build.gradle" ]; then
-            cp "$PROJ_ROOT/android/app/build.gradle" keylink_app/android/app/build.gradle
-          fi
-          if [ -f "$PROJ_ROOT/android/app/build.gradle.kts" ]; then
-            cp "$PROJ_ROOT/android/app/build.gradle.kts" keylink_app/android/app/build.gradle.kts
-          fi
-
-      - name: Configure and build release APK
+      - name: Fix Dart calls and build release APK
         working-directory: keylink_app
         run: |
           set -e
-
-          if [ ! -d "assets" ] && [ -f "pubspec.yaml" ]; then
-            awk '/^[[:space:]]*assets:/{skip=1; next} skip && /^[[:space:]]*-/{next} skip && /^[[:space:]]+[A-Za-z0-9_\/-]+:/{next} skip && /^[[:space:]]*$/{next} {skip=0; print}' pubspec.yaml > pubspec.tmp && mv pubspec.tmp pubspec.yaml
-          fi
-
-          if [ -f "android/app/build.gradle" ]; then
-            sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' android/app/build.gradle
-            sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g' android/app/build.gradle
-            sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 35/g' android/app/build.gradle
-            sed -i 's/compileSdk = [0-9]\+/compileSdk = 35/g' android/app/build.gradle
-          fi
+          [ -f "android/app/build.gradle" ] && sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 35/g; s/compileSdk = [0-9]\+/compileSdk = 35/g' android/app/build.gradle
 
           python3 - <<'PY'
-            import re
-            from pathlib import Path
+import re
+from pathlib import Path
 
-            lib_dir = Path("lib")
-            screens = {
-                "HowToUseScreen": Path("lib/screens/how_to_use_screen.dart"),
-                "KeyboardSettingsScreen": Path("lib/screens/keyboard_settings_screen.dart"),
-                "MouseSettingsScreen": Path("lib/screens/mouse_settings_screen.dart"),
-                "PresetsScreen": Path("lib/screens/presets_screen.dart"),
-            }
-
-            string_lang_widgets = set()
-            req_on_lang_changed = {}
-
-            for name, path in screens.items():
-                if not path.exists():
-                    continue
-                txt = path.read_text(encoding="utf-8", errors="ignore")
-                if re.search(r"\bString\??\s+language\b", txt):
-                    string_lang_widgets.add(name)
-                if re.search(r"required\s+[\w<>?.\s]+\s+onLanguageChanged\b", txt):
-                    zero_arg = bool(re.search(r"\b(?:VoidCallback|void\s+Function\s*\(\s*\))\s+onLanguageChanged\b", txt))
-                    req_on_lang_changed[name] = "() {}" if zero_arg else "(_) {}"
-
-            def split_top_level_args(s: str):
-                parts, buf = [], []
-                dp = db = dc = 0
-                sq = dq = esc = False
-                for ch in s:
-                    if esc:
-                        buf.append(ch); esc = False; continue
-                    if ch == "\\":
-                        buf.append(ch); esc = True; continue
-                    if ch == "'" and not dq:
-                        sq = not sq; buf.append(ch); continue
-                    if ch == '"' and not sq:
-                        dq = not dq; buf.append(ch); continue
-                    if sq or dq:
-                        buf.append(ch); continue
-                    if ch == "(": dp += 1
-                    elif ch == ")": dp = max(0, dp - 1)
-                    elif ch == "[": db += 1
-                    elif ch == "]": db = max(0, db - 1)
-                    elif ch == "{": dc += 1
-                    elif ch == "}": dc = max(0, dc - 1)
-                    if ch == "," and dp == 0 and db == 0 and dc == 0:
-                        parts.append("".join(buf)); buf = []
-                    else:
-                        buf.append(ch)
-                if buf:
-                    parts.append("".join(buf))
-                return parts
-
-            def find_matching_paren(text: str, open_idx: int) -> int:
-                depth = 0
-                sq = dq = esc = False
-                for i in range(open_idx, len(text)):
-                    ch = text[i]
-                    if esc: esc = False; continue
-                    if ch == "\\": esc = True; continue
-                    if ch == "'" and not dq: sq = not sq; continue
-                    if ch == '"' and not sq: dq = not dq; continue
-                    if sq or dq: continue
-                    if ch == "(": depth += 1
-                    elif ch == ")":
-                        depth -= 1
-                        if depth == 0:
-                            return i
-                return -1
-
-            bool_vars = {"_isArabic", "isAr", "isArabic"}
-
-            for dart_file in lib_dir.rglob("*.dart"):
-                content = dart_file.read_text(encoding="utf-8", errors="ignore")
-                changed = False
-
-                for widget_name in screens:
-                    pattern = re.compile(rf"(?:\bconst\s+)?\b{widget_name}\s*\(")
-                    pos = 0
-                    out = []
-                    while True:
-                        m = pattern.search(content, pos)
-                        if not m:
-                            out.append(content[pos:])
-                            break
-                        match_start = m.start()
-                        open_paren = content.find("(", m.end() - 1)
-                        close_paren = find_matching_paren(content, open_paren)
-                        if close_paren == -1:
-                            out.append(content[pos:])
-                            break
-
-                        inner = content[open_paren + 1 : close_paren]
-                        after = content[close_paren + 1 : close_paren + 40].lstrip()
-
-                        if inner.lstrip().startswith("{") or after.startswith(":") or after.startswith(";"):
-                            out.append(content[pos : close_paren + 1])
-                            pos = close_paren + 1
-                            continue
-
-                        raw_args = split_top_level_args(inner)
-                        kept = []
-                        has_on_lang = False
-                        call_modified = False
-
-                        for arg in raw_args:
-                            st = arg.strip()
-                            if not st:
-                                continue
-                            kw = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([\s\S]*)$", st)
-                            if kw:
-                                k, v = kw.group(1), kw.group(2).strip()
-                                if k == "onLanguageChanged":
-                                    has_on_lang = True
-                                if k == "language" and widget_name in string_lang_widgets and v in bool_vars:
-                                    kept.append(f"language: ({v} ? 'ar' : 'en')")
-                                    call_modified = True
-                                    continue
-                            kept.append(st)
-
-                        if widget_name in req_on_lang_changed and not has_on_lang:
-                            kept.append(f"onLanguageChanged: {req_on_lang_changed[widget_name]}")
-                            call_modified = True
-
-                        prefix_seg = content[match_start : open_paren + 1]
-                        if call_modified:
-                            prefix_seg = re.sub(r"\bconst\s+", "", prefix_seg, count=1)
-                            changed = True
-
-                        out.append(content[pos:match_start])
-                        out.append(prefix_seg)
-                        out.append(", ".join(kept))
-                        out.append(content[close_paren : close_paren + 1])
-                        pos = close_paren + 1
-
-                    content = "".join(out)
-
-                if changed:
-                    dart_file.write_text(content, encoding="utf-8")
-          PY
+for p in Path("lib").rglob("*.dart"):
+    s = p.read_text(encoding="utf-8", errors="ignore")
+    orig = s
+    s = re.sub(r"\bisArabic\s*:", "language:", s)
+    s = re.sub(r"\blanguage\s*:\s*(_isArabic|isAr|isArabic)\b", r"language: (\1 ? 'ar' : 'en')", s)
+    s = re.sub(r"\b(profile|profiles|onProfileChanged|activeProfile|onSelectProfile|onAddProfile)\s*:\s*[^,\n)]+,?\s*", "", s)
+    if s != orig:
+        p.write_text(s, encoding="utf-8")
+PY
 
           flutter pub get
           flutter build apk --release
