@@ -130,6 +130,16 @@ jobs:
 
           flutter pub add shared_preferences
 
+          # Fix main.dart imports if screen files live under lib/screens/
+          if [ -f "lib/main.dart" ]; then
+            for scr in home_screen.dart quran_screen.dart azkar_screen.dart settings_screen.dart alarm_screen.dart; do
+              if [ -f "lib/screens/$scr" ]; then
+                sed -i "s|import '$scr';|import 'screens/$scr';|g" lib/main.dart
+                sed -i "s|import \"$scr\";|import \"screens/$scr\";|g" lib/main.dart
+              fi
+            done
+          fi
+
           # Normalize screen imports
           find lib/screens -name "*.dart" -exec sed -i "s|import 'screens/\([^']*\)';|import '\1';|g" {} +
           find lib/screens -name "*.dart" -exec sed -i 's|import "screens/\([^"]*\)";|import "\1";|g' {} +
