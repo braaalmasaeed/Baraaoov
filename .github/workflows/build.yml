@@ -113,79 +113,14 @@ jobs:
               "PresetsScreen": Path("lib/screens/presets_screen.dart"),
           }
 
-          candidate_params = [
-              "isArabic",
-              "language",
-              "profile",
-              "profiles",
-              "onProfileChanged",
-              "activeProfile",
-              "onSelectProfile",
-              "onAddProfile",
-          ]
-
-          accepted_by_widget = {}
+          requires_language = {}
           for name, path in screens.items():
-              accepted = set()
+              req_lang = False
               if path.exists():
                   txt = path.read_text(encoding="utf-8", errors="ignore")
-                  ctor_match = re.search(rf"\b{name}\s*\(([\s\S]*?)\)\s*;", txt)
-                  ctor_block = ctor_match.group(1) if ctor_match else txt
-                  for p in candidate_params:
-                      if re.search(rf"\b{re.escape(p)}\b", ctor_block):
-                          accepted.add(p)
-              accepted_by_widget[name] = accepted
-
-          def split_top_level_args(s: str):
-              parts = []
-              buf = []
-              depth_paren = 0
-              depth_bracket = 0
-              depth_brace = 0
-              in_single = False
-              in_double = False
-              escape = False
-              for ch in s:
-                  if escape:
-                      buf.append(ch)
-                      escape = False
-                      continue
-                  if ch == "\\":
-                      buf.append(ch)
-                      escape = True
-                      continue
-                  if ch == "'" and not in_double:
-                      in_single = not in_single
-                      buf.append(ch)
-                      continue
-                  if ch == '"' and not in_single:
-                      in_double = not in_double
-                      buf.append(ch)
-                      continue
-                  if in_single or in_double:
-                      buf.append(ch)
-                      continue
-                  if ch == "(":
-                      depth_paren += 1
-                  elif ch == ")":
-                      depth_paren = max(0, depth_paren - 1)
-                  elif ch == "[":
-                      depth_bracket += 1
-                  elif ch == "]":
-                      depth_bracket = max(0, depth_bracket - 1)
-                  elif ch == "{":
-                      depth_brace += 1
-                  elif ch == "}":
-                      depth_brace = max(0, depth_brace - 1)
-
-                  if ch == "," and depth_paren == 0 and depth_bracket == 0 and depth_brace == 0:
-                      parts.append("".join(buf))
-                      buf = []
-                  else:
-                      buf.append(ch)
-              if buf:
-                  parts.append("".join(buf))
-              return parts
+                  if re.search(rf"required\s+(?:this\.|[\w<>?]+\s+)language\b", txt):
+                      req_lang = True
+              requires_language[name] = req_lang
 
           def find_matching_paren(text: str, open_idx: int) -> int:
               depth = 0
@@ -218,10 +153,12 @@ jobs:
 
           for dart_file in lib_dir.rglob("*.dart"):
               content = dart_file.read_text(encoding="utf-8", errors="ignore")
+              lang_var = "isAr" if re.search(r"\bisAr\b", content) else ("isArabic" if re.search(r"\bisArabic\b", content) else None)
+              if not lang_var:
+                  continue
               changed = False
-              for widget_name, accepted in accepted_by_widget.items():
-                  disallowed = [p for p in candidate_params if p not in accepted]
-                  if not disallowed:
+              for widget_name, req_lang in requires_language.items():
+                  if not req_lang:
                       continue
                   pattern = re.compile(rf"\b{widget_name}\s*\(")
                   pos = 0
@@ -237,19 +174,12 @@ jobs:
                           out.append(content[pos:])
                           break
                       inner = content[open_paren + 1 : close_paren]
-                      raw_args = split_top_level_args(inner)
-                      kept = []
-                      for arg in raw_args:
-                          stripped = arg.strip()
-                          if not stripped:
-                              continue
-                          kw_match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:", stripped)
-                          if kw_match and kw_match.group(1) in disallowed:
-                              changed = True
-                              continue
-                          kept.append(arg)
+                      if not re.search(r"\blanguage\s*:", inner):
+                          sep = ", " if inner.strip() and not inner.rstrip().endswith(",") else ("" if not inner.strip() else " ")
+                          inner = f"{inner}{sep}language: {lang_var}"
+                          changed = True
                       out.append(content[pos : open_paren + 1])
-                      out.append(",".join(kept))
+                      out.append(inner)
                       out.append(content[close_paren : close_paren + 1])
                       pos = close_paren + 1
                   content = "".join(out)
