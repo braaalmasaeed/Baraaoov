@@ -82,9 +82,6 @@ jobs:
             cp "$PROJ_ROOT/android/app/build.gradle.kts" keylink_app/android/app/build.gradle.kts
           fi
 
-          echo "=== Files in keylink_app/lib ==="
-          find keylink_app/lib -type f | sort
-
       - name: Configure and build release APK
         working-directory: keylink_app
         run: |
@@ -113,38 +110,58 @@ jobs:
               "PresetsScreen": Path("lib/screens/presets_screen.dart"),
           }
 
-          requires_language = {}
+          # Detect exact accepted named parameters in each screen's constructor
+          accepted_map = {}
           for name, path in screens.items():
-              req_lang = False
+              accepted = set()
               if path.exists():
                   txt = path.read_text(encoding="utf-8", errors="ignore")
-                  if re.search(rf"required\s+(?:this\.|[\w<>?]+\s+)language\b", txt):
-                      req_lang = True
-              requires_language[name] = req_lang
+                  m = re.search(rf"\b{name}\s*\(\s*\{{([\s\S]*?)\}}\s*\)", txt)
+                  if m:
+                      for param in re.findall(r"\bthis\.([A-Za-z_][A-Za-z0-9_]*)", m.group(1)):
+                          accepted.add(param)
+              accepted_map[name] = accepted
+
+          def split_top_level_args(s: str):
+              parts, buf = [], []
+              dp = db = dc = 0
+              sq = dq = esc = False
+              for ch in s:
+                  if esc:
+                      buf.append(ch); esc = False; continue
+                  if ch == "\\":
+                      buf.append(ch); esc = True; continue
+                  if ch == "'" and not dq:
+                      sq = not sq; buf.append(ch); continue
+                  if ch == '"' and not sq:
+                      dq = not dq; buf.append(ch); continue
+                  if sq or dq:
+                      buf.append(ch); continue
+                  if ch == "(": dp += 1
+                  elif ch == ")": dp = max(0, dp - 1)
+                  elif ch == "[": db += 1
+                  elif ch == "]": db = max(0, db - 1)
+                  elif ch == "{": dc += 1
+                  elif ch == "}": dc = max(0, dc - 1)
+                  if ch == "," and dp == 0 and db == 0 and dc == 0:
+                      parts.append("".join(buf)); buf = []
+                  else:
+                      buf.append(ch)
+              if buf:
+                  parts.append("".join(buf))
+              return parts
 
           def find_matching_paren(text: str, open_idx: int) -> int:
               depth = 0
-              in_single = False
-              in_double = False
-              escape = False
+              sq = dq = esc = False
               for i in range(open_idx, len(text)):
                   ch = text[i]
-                  if escape:
-                      escape = False
-                      continue
-                  if ch == "\\":
-                      escape = True
-                      continue
-                  if ch == "'" and not in_double:
-                      in_single = not in_single
-                      continue
-                  if ch == '"' and not in_single:
-                      in_double = not in_double
-                      continue
-                  if in_single or in_double:
-                      continue
-                  if ch == "(":
-                      depth += 1
+                  if esc: esc = False; continue
+                  if ch == "\\": esc = True; continue
+                  if ch == "'" and not dq: sq = not sq; continue
+                  if ch == '"' and not sq: dq = not dq; continue
+                  if sq or dq: continue
+                  if ch == "(": depth += 1
                   elif ch == ")":
                       depth -= 1
                       if depth == 0:
@@ -153,13 +170,10 @@ jobs:
 
           for dart_file in lib_dir.rglob("*.dart"):
               content = dart_file.read_text(encoding="utf-8", errors="ignore")
-              lang_var = "isAr" if re.search(r"\bisAr\b", content) else ("isArabic" if re.search(r"\bisArabic\b", content) else None)
-              if not lang_var:
-                  continue
+              lang_var = "isAr" if re.search(r"\bisAr\b", content) else ("isArabic" if re.search(r"\bisArabic\b", content) else "true")
               changed = False
-              for widget_name, req_lang in requires_language.items():
-                  if not req_lang:
-                      continue
+
+              for widget_name, accepted in accepted_map.items():
                   pattern = re.compile(rf"\b{widget_name}\s*\(")
                   pos = 0
                   out = []
@@ -173,16 +187,51 @@ jobs:
                       if close_paren == -1:
                           out.append(content[pos:])
                           break
+
                       inner = content[open_paren + 1 : close_paren]
-                      if not re.search(r"\blanguage\s*:", inner):
-                          sep = ", " if inner.strip() and not inner.rstrip().endswith(",") else ("" if not inner.strip() else " ")
-                          inner = f"{inner}{sep}language: {lang_var}"
+                      after = content[close_paren + 1 : close_paren + 40].lstrip()
+
+                      # Skip constructor declarations (e.g. `({Key? key, ...}) : super(...)` or `;`)
+                      if inner.lstrip().startswith("{") or after.startswith(":") or after.startswith(";"):
+                          out.append(content[pos : close_paren + 1])
+                          pos = close_paren + 1
+                          continue
+
+                      raw_args = split_top_level_args(inner)
+                      kept = []
+                      has_language = False
+
+                      for arg in raw_args:
+                          st = arg.strip()
+                          if not st:
+                              continue
+                          kw = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([\s\S]*)$", st)
+                          if kw:
+                              k, v = kw.group(1), kw.group(2)
+                              if k == "isArabic" and "isArabic" not in accepted and "language" in accepted:
+                                  if not has_language:
+                                      kept.append(f"language: {v}")
+                                      has_language = True
+                                  changed = True
+                                  continue
+                              if k == "language":
+                                  has_language = True
+                              if accepted and k not in accepted:
+                                  changed = True
+                                  continue
+                          kept.append(st)
+
+                      if "language" in accepted and not has_language:
+                          kept.append(f"language: {lang_var}")
                           changed = True
+
                       out.append(content[pos : open_paren + 1])
-                      out.append(inner)
+                      out.append(", ".join(kept))
                       out.append(content[close_paren : close_paren + 1])
                       pos = close_paren + 1
+
                   content = "".join(out)
+
               if changed:
                   dart_file.write_text(content, encoding="utf-8")
           PY
@@ -194,3 +243,4 @@ jobs:
         with:
           name: keylink-apk
           path: keylink_app/build/app/outputs/flutter-apk/app-release.apk
+ 
