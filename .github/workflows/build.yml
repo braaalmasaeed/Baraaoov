@@ -113,7 +113,18 @@ jobs:
               "PresetsScreen": Path("lib/screens/presets_screen.dart"),
           }
 
-          # First, inject missing required named parameters (`language`, `profile`, `profiles`) into screen constructors if used in call sites
+          def add_named_param(params_str, param_entry):
+              s = params_str.strip()
+              if not s:
+                  return f"{{{param_entry}}}"
+              if "{" in s and "}" in s:
+                  idx = s.rfind("}")
+                  before = s[:idx].rstrip()
+                  if before and not before.endswith("{") and not before.endswith(","):
+                      before = f"{before},"
+                  return f"{before} {param_entry}}}"
+              return f"{s}, {{{param_entry}}}"
+
           for name, path in screens.items():
               if not path.exists():
                   continue
@@ -124,54 +135,30 @@ jobs:
               prefix, params, suffix = ctor_match.group(1), ctor_match.group(2), ctor_match.group(3)
               new_params = params
 
-              # Ensure `language` exists if missing
-              if "language" not in params:
-                  lang_type = "String"
-                  if "AppLanguage" in txt:
-                      lang_type = "AppLanguage"
-                  addition = f"this.language = {'AppLanguage.en' if lang_type == 'AppLanguage' else \"'en'\"},"
-                  if "{" in new_params and "}" in new_params:
-                      new_params = re.sub(r"\}\s*$", f" {addition}}}", new_params.strip())
-                  elif new_params.strip():
-                      new_params = f"{new_params.strip()}, {{{addition}}}"
-                  else:
-                      new_params = f"{{{addition}}}"
+              if "language" not in new_params:
+                  default_lang = "AppLanguage.en" if "AppLanguage" in txt else "'en'"
+                  new_params = add_named_param(new_params, f"this.language = {default_lang},")
 
-              # Ensure `profile` exists if missing
               if "profile" not in new_params:
                   prof_type = "dynamic"
                   for candidate in ["Map<String, dynamic>", "KeyProfile", "Profile", "AppProfile"]:
                       if candidate in txt:
                           prof_type = candidate
                           break
-                  addition = f"{prof_type}? profile,"
-                  if "{" in new_params and "}" in new_params:
-                      new_params = re.sub(r"\}\s*$", f" {addition}}}", new_params.strip())
-                  elif new_params.strip():
-                      new_params = f"{new_params.strip()}, {{{addition}}}"
-                  else:
-                      new_params = f"{{{addition}}}"
+                  new_params = add_named_param(new_params, f"{prof_type}? profile,")
 
-              # Ensure `profiles` exists if missing
               if "profiles" not in new_params:
                   list_type = "List<dynamic>"
                   for candidate in ["List>", "List<KeyProfile>", "List<Profile>", "List<AppProfile>"]:
                       if candidate in txt:
                           list_type = candidate
                           break
-                  addition = f"{list_type}? profiles,"
-                  if "{" in new_params and "}" in new_params:
-                      new_params = re.sub(r"\}\s*$", f" {addition}}}", new_params.strip())
-                  elif new_params.strip():
-                      new_params = f"{new_params.strip()}, {{{addition}}}"
-                  else:
-                      new_params = f"{{{addition}}}"
+                  new_params = add_named_param(new_params, f"{list_type}? profiles,")
 
               if new_params != params:
                   updated_txt = txt[:ctor_match.start()] + f"{prefix}{new_params}{suffix}" + txt[ctor_match.end():]
                   path.write_text(updated_txt, encoding="utf-8")
 
-          # Second, remove any `isArabic:` named arguments if target doesn't accept `isArabic`
           for dart_file in lib_dir.rglob("*.dart"):
               content = dart_file.read_text(encoding="utf-8", errors="ignore")
               original = content
