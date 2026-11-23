@@ -99,141 +99,145 @@ jobs:
           fi
 
           python3 - <<'PY'
-          import re
-          from pathlib import Path
+            import re
+            from pathlib import Path
 
-          lib_dir = Path("lib")
-          screens = {
-              "HowToUseScreen": Path("lib/screens/how_to_use_screen.dart"),
-              "KeyboardSettingsScreen": Path("lib/screens/keyboard_settings_screen.dart"),
-              "MouseSettingsScreen": Path("lib/screens/mouse_settings_screen.dart"),
-              "PresetsScreen": Path("lib/screens/presets_screen.dart"),
-          }
+            lib_dir = Path("lib")
+            screens = {
+                "HowToUseScreen": Path("lib/screens/how_to_use_screen.dart"),
+                "KeyboardSettingsScreen": Path("lib/screens/keyboard_settings_screen.dart"),
+                "MouseSettingsScreen": Path("lib/screens/mouse_settings_screen.dart"),
+                "PresetsScreen": Path("lib/screens/presets_screen.dart"),
+            }
 
-          # Detect exact accepted named parameters in each screen's constructor
-          accepted_map = {}
-          for name, path in screens.items():
-              accepted = set()
-              if path.exists():
-                  txt = path.read_text(encoding="utf-8", errors="ignore")
-                  m = re.search(rf"\b{name}\s*\(\s*\{{([\s\S]*?)\}}\s*\)", txt)
-                  if m:
-                      for param in re.findall(r"\bthis\.([A-Za-z_][A-Za-z0-9_]*)", m.group(1)):
-                          accepted.add(param)
-              accepted_map[name] = accepted
+            string_lang_widgets = set()
+            req_on_lang_changed = {}
 
-          def split_top_level_args(s: str):
-              parts, buf = [], []
-              dp = db = dc = 0
-              sq = dq = esc = False
-              for ch in s:
-                  if esc:
-                      buf.append(ch); esc = False; continue
-                  if ch == "\\":
-                      buf.append(ch); esc = True; continue
-                  if ch == "'" and not dq:
-                      sq = not sq; buf.append(ch); continue
-                  if ch == '"' and not sq:
-                      dq = not dq; buf.append(ch); continue
-                  if sq or dq:
-                      buf.append(ch); continue
-                  if ch == "(": dp += 1
-                  elif ch == ")": dp = max(0, dp - 1)
-                  elif ch == "[": db += 1
-                  elif ch == "]": db = max(0, db - 1)
-                  elif ch == "{": dc += 1
-                  elif ch == "}": dc = max(0, dc - 1)
-                  if ch == "," and dp == 0 and db == 0 and dc == 0:
-                      parts.append("".join(buf)); buf = []
-                  else:
-                      buf.append(ch)
-              if buf:
-                  parts.append("".join(buf))
-              return parts
+            for name, path in screens.items():
+                if not path.exists():
+                    continue
+                txt = path.read_text(encoding="utf-8", errors="ignore")
+                if re.search(r"\bString\??\s+language\b", txt):
+                    string_lang_widgets.add(name)
+                if re.search(r"required\s+[\w<>?.\s]+\s+onLanguageChanged\b", txt):
+                    zero_arg = bool(re.search(r"\b(?:VoidCallback|void\s+Function\s*\(\s*\))\s+onLanguageChanged\b", txt))
+                    req_on_lang_changed[name] = "() {}" if zero_arg else "(_) {}"
 
-          def find_matching_paren(text: str, open_idx: int) -> int:
-              depth = 0
-              sq = dq = esc = False
-              for i in range(open_idx, len(text)):
-                  ch = text[i]
-                  if esc: esc = False; continue
-                  if ch == "\\": esc = True; continue
-                  if ch == "'" and not dq: sq = not sq; continue
-                  if ch == '"' and not sq: dq = not dq; continue
-                  if sq or dq: continue
-                  if ch == "(": depth += 1
-                  elif ch == ")":
-                      depth -= 1
-                      if depth == 0:
-                          return i
-              return -1
+            def split_top_level_args(s: str):
+                parts, buf = [], []
+                dp = db = dc = 0
+                sq = dq = esc = False
+                for ch in s:
+                    if esc:
+                        buf.append(ch); esc = False; continue
+                    if ch == "\\":
+                        buf.append(ch); esc = True; continue
+                    if ch == "'" and not dq:
+                        sq = not sq; buf.append(ch); continue
+                    if ch == '"' and not sq:
+                        dq = not dq; buf.append(ch); continue
+                    if sq or dq:
+                        buf.append(ch); continue
+                    if ch == "(": dp += 1
+                    elif ch == ")": dp = max(0, dp - 1)
+                    elif ch == "[": db += 1
+                    elif ch == "]": db = max(0, db - 1)
+                    elif ch == "{": dc += 1
+                    elif ch == "}": dc = max(0, dc - 1)
+                    if ch == "," and dp == 0 and db == 0 and dc == 0:
+                        parts.append("".join(buf)); buf = []
+                    else:
+                        buf.append(ch)
+                if buf:
+                    parts.append("".join(buf))
+                return parts
 
-          for dart_file in lib_dir.rglob("*.dart"):
-              content = dart_file.read_text(encoding="utf-8", errors="ignore")
-              lang_var = "isAr" if re.search(r"\bisAr\b", content) else ("isArabic" if re.search(r"\bisArabic\b", content) else "true")
-              changed = False
+            def find_matching_paren(text: str, open_idx: int) -> int:
+                depth = 0
+                sq = dq = esc = False
+                for i in range(open_idx, len(text)):
+                    ch = text[i]
+                    if esc: esc = False; continue
+                    if ch == "\\": esc = True; continue
+                    if ch == "'" and not dq: sq = not sq; continue
+                    if ch == '"' and not sq: dq = not dq; continue
+                    if sq or dq: continue
+                    if ch == "(": depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        if depth == 0:
+                            return i
+                return -1
 
-              for widget_name, accepted in accepted_map.items():
-                  pattern = re.compile(rf"\b{widget_name}\s*\(")
-                  pos = 0
-                  out = []
-                  while True:
-                      m = pattern.search(content, pos)
-                      if not m:
-                          out.append(content[pos:])
-                          break
-                      open_paren = m.end() - 1
-                      close_paren = find_matching_paren(content, open_paren)
-                      if close_paren == -1:
-                          out.append(content[pos:])
-                          break
+            bool_vars = {"_isArabic", "isAr", "isArabic"}
 
-                      inner = content[open_paren + 1 : close_paren]
-                      after = content[close_paren + 1 : close_paren + 40].lstrip()
+            for dart_file in lib_dir.rglob("*.dart"):
+                content = dart_file.read_text(encoding="utf-8", errors="ignore")
+                changed = False
 
-                      # Skip constructor declarations (e.g. `({Key? key, ...}) : super(...)` or `;`)
-                      if inner.lstrip().startswith("{") or after.startswith(":") or after.startswith(";"):
-                          out.append(content[pos : close_paren + 1])
-                          pos = close_paren + 1
-                          continue
+                for widget_name in screens:
+                    pattern = re.compile(rf"(?:\bconst\s+)?\b{widget_name}\s*\(")
+                    pos = 0
+                    out = []
+                    while True:
+                        m = pattern.search(content, pos)
+                        if not m:
+                            out.append(content[pos:])
+                            break
+                        match_start = m.start()
+                        open_paren = content.find("(", m.end() - 1)
+                        close_paren = find_matching_paren(content, open_paren)
+                        if close_paren == -1:
+                            out.append(content[pos:])
+                            break
 
-                      raw_args = split_top_level_args(inner)
-                      kept = []
-                      has_language = False
+                        inner = content[open_paren + 1 : close_paren]
+                        after = content[close_paren + 1 : close_paren + 40].lstrip()
 
-                      for arg in raw_args:
-                          st = arg.strip()
-                          if not st:
-                              continue
-                          kw = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([\s\S]*)$", st)
-                          if kw:
-                              k, v = kw.group(1), kw.group(2)
-                              if k == "isArabic" and "isArabic" not in accepted and "language" in accepted:
-                                  if not has_language:
-                                      kept.append(f"language: {v}")
-                                      has_language = True
-                                  changed = True
-                                  continue
-                              if k == "language":
-                                  has_language = True
-                              if accepted and k not in accepted:
-                                  changed = True
-                                  continue
-                          kept.append(st)
+                        if inner.lstrip().startswith("{") or after.startswith(":") or after.startswith(";"):
+                            out.append(content[pos : close_paren + 1])
+                            pos = close_paren + 1
+                            continue
 
-                      if "language" in accepted and not has_language:
-                          kept.append(f"language: {lang_var}")
-                          changed = True
+                        raw_args = split_top_level_args(inner)
+                        kept = []
+                        has_on_lang = False
+                        call_modified = False
 
-                      out.append(content[pos : open_paren + 1])
-                      out.append(", ".join(kept))
-                      out.append(content[close_paren : close_paren + 1])
-                      pos = close_paren + 1
+                        for arg in raw_args:
+                            st = arg.strip()
+                            if not st:
+                                continue
+                            kw = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([\s\S]*)$", st)
+                            if kw:
+                                k, v = kw.group(1), kw.group(2).strip()
+                                if k == "onLanguageChanged":
+                                    has_on_lang = True
+                                if k == "language" and widget_name in string_lang_widgets and v in bool_vars:
+                                    kept.append(f"language: ({v} ? 'ar' : 'en')")
+                                    call_modified = True
+                                    continue
+                            kept.append(st)
 
-                  content = "".join(out)
+                        if widget_name in req_on_lang_changed and not has_on_lang:
+                            kept.append(f"onLanguageChanged: {req_on_lang_changed[widget_name]}")
+                            call_modified = True
 
-              if changed:
-                  dart_file.write_text(content, encoding="utf-8")
+                        prefix_seg = content[match_start : open_paren + 1]
+                        if call_modified:
+                            prefix_seg = re.sub(r"\bconst\s+", "", prefix_seg, count=1)
+                            changed = True
+
+                        out.append(content[pos:match_start])
+                        out.append(prefix_seg)
+                        out.append(", ".join(kept))
+                        out.append(content[close_paren : close_paren + 1])
+                        pos = close_paren + 1
+
+                    content = "".join(out)
+
+                if changed:
+                    dart_file.write_text(content, encoding="utf-8")
           PY
 
           flutter pub get
@@ -243,4 +247,3 @@ jobs:
         with:
           name: keylink-apk
           path: keylink_app/build/app/outputs/flutter-apk/app-release.apk
- 
