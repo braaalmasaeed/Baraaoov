@@ -140,6 +140,18 @@ jobs:
             done
           fi
 
+          # Fix background_prayer_service.dart imports pointing to lib/screens/
+          if [ -f "lib/services/background_prayer_service.dart" ]; then
+            for scr in home_screen.dart quran_screen.dart azkar_screen.dart settings_screen.dart alarm_screen.dart; do
+              if [ -f "lib/screens/$scr" ]; then
+                sed -i "s|import '$scr';|import '../screens/$scr';|g" lib/services/background_prayer_service.dart
+                sed -i "s|import \"$scr\";|import \"../screens/$scr\";|g" lib/services/background_prayer_service.dart
+                sed -i "s|import 'screens/$scr';|import '../screens/$scr';|g" lib/services/background_prayer_service.dart
+                sed -i "s|import \"screens/$scr\";|import \"../screens/$scr\";|g" lib/services/background_prayer_service.dart
+              fi
+            done
+          fi
+
           # Normalize screen imports
           find lib/screens -name "*.dart" -exec sed -i "s|import 'screens/\([^']*\)';|import '\1';|g" {} +
           find lib/screens -name "*.dart" -exec sed -i 's|import "screens/\([^"]*\)";|import "\1";|g' {} +
@@ -149,11 +161,6 @@ jobs:
             find lib -name "*.dart" -exec sed -i "s|import 'lib/$scr';|import 'screens/$scr';|g" {} +
             find lib -name "*.dart" -exec sed -i "s|import \"lib/$scr\";|import \"screens/$scr\";|g" {} +
           done
-
-          if [ -f "lib/services/background_prayer_service.dart" ]; then
-            sed -i "s|import 'screens/alarm_screen.dart';|import '../screens/alarm_screen.dart';|g" lib/services/background_prayer_service.dart
-            sed -i 's|import "screens/alarm_screen.dart";|import "../screens/alarm_screen.dart";|g' lib/services/background_prayer_service.dart
-          fi
 
           find lib -name "*.dart" -exec sed -i 's/const Color(stringToColor(/Color(stringToColor(/g' {} +
 
