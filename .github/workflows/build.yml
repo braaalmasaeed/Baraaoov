@@ -36,7 +36,6 @@ jobs:
             unzip -o "$ZIP_FILE" -d extracted_dir
           fi
 
-          # Locate project root inside extracted_dir or repository root
           PROJ_ROOT=""
           if [ -f "extracted_dir/pubspec.yaml" ]; then
             PROJ_ROOT="extracted_dir"
@@ -57,25 +56,21 @@ jobs:
 
           flutter create keylink_app --org com.baraa.keylink --project-name keylink
 
-          # Copy lib/
           if [ -d "$PROJ_ROOT/lib" ]; then
             rm -rf keylink_app/lib/*
             cp -r "$PROJ_ROOT/lib"/* keylink_app/lib/
           fi
 
-          # Copy assets/ if present
           if [ -d "$PROJ_ROOT/assets" ]; then
             mkdir -p keylink_app/assets
             cp -r "$PROJ_ROOT/assets"/* keylink_app/assets/
           fi
 
-          # Copy pubspec.yaml and analysis_options.yaml
           cp "$PROJ_ROOT/pubspec.yaml" keylink_app/pubspec.yaml
           if [ -f "$PROJ_ROOT/analysis_options.yaml" ]; then
             cp "$PROJ_ROOT/analysis_options.yaml" keylink_app/analysis_options.yaml
           fi
 
-          # Preserve custom Android files (Kotlin, res, manifest, gradle) from KeyLink if present
           if [ -d "$PROJ_ROOT/android/app/src" ]; then
             rm -rf keylink_app/android/app/src
             cp -r "$PROJ_ROOT/android/app/src" keylink_app/android/app/src
@@ -89,8 +84,6 @@ jobs:
 
           echo "=== Files in keylink_app/lib ==="
           find keylink_app/lib -type f | sort
-          echo "=== Files in keylink_app/android/app/src ==="
-          find keylink_app/android/app/src -type f 2>/dev/null | sort || true
 
       - name: Configure and build release APK
         working-directory: keylink_app
@@ -108,43 +101,88 @@ jobs:
             sed -i 's/compileSdk = [0-9]\+/compileSdk = 35/g' android/app/build.gradle
           fi
 
-          # Fix mismatched named parameter `isArabic` in call sites when target constructors don't accept it
           python3 - <<'PY'
           import re
           from pathlib import Path
 
           lib_dir = Path("lib")
-          targets = {
-              "HowToUseScreen": "lib/screens/how_to_use_screen.dart",
-              "KeyboardSettingsScreen": "lib/screens/keyboard_settings_screen.dart",
-              "MouseSettingsScreen": "lib/screens/mouse_settings_screen.dart",
-              "PresetsScreen": "lib/screens/presets_screen.dart",
+          screens = {
+              "HowToUseScreen": Path("lib/screens/how_to_use_screen.dart"),
+              "KeyboardSettingsScreen": Path("lib/screens/keyboard_settings_screen.dart"),
+              "MouseSettingsScreen": Path("lib/screens/mouse_settings_screen.dart"),
+              "PresetsScreen": Path("lib/screens/presets_screen.dart"),
           }
 
-          accepts_is_arabic = {}
-          for widget_name, rel_path in targets.items():
-              p = Path(rel_path)
-              if p.exists():
-                  txt = p.read_text(encoding="utf-8", errors="ignore")
-                  m = re.search(rf"class\s+{widget_name}\b.*?\{{\s*(?:const\s+{widget_name}\s*\((.*?)\)|{widget_name}\s*\((.*?)\))", txt, re.S)
-                  ctor = (m.group(1) or m.group(2) or "") if m else ""
-                  accepts_is_arabic[widget_name] = "isArabic" in ctor
-              else:
-                  accepts_is_arabic[widget_name] = False
+          # First, inject missing required named parameters (`language`, `profile`, `profiles`) into screen constructors if used in call sites
+          for name, path in screens.items():
+              if not path.exists():
+                  continue
+              txt = path.read_text(encoding="utf-8", errors="ignore")
+              ctor_match = re.search(rf"((?:const\s+)?{name}\s*\()([\s\S]*?)(\)\s*;)", txt)
+              if not ctor_match:
+                  continue
+              prefix, params, suffix = ctor_match.group(1), ctor_match.group(2), ctor_match.group(3)
+              new_params = params
 
+              # Ensure `language` exists if missing
+              if "language" not in params:
+                  lang_type = "String"
+                  if "AppLanguage" in txt:
+                      lang_type = "AppLanguage"
+                  addition = f"this.language = {'AppLanguage.en' if lang_type == 'AppLanguage' else \"'en'\"},"
+                  if "{" in new_params and "}" in new_params:
+                      new_params = re.sub(r"\}\s*$", f" {addition}}}", new_params.strip())
+                  elif new_params.strip():
+                      new_params = f"{new_params.strip()}, {{{addition}}}"
+                  else:
+                      new_params = f"{{{addition}}}"
+
+              # Ensure `profile` exists if missing
+              if "profile" not in new_params:
+                  prof_type = "dynamic"
+                  for candidate in ["Map<String, dynamic>", "KeyProfile", "Profile", "AppProfile"]:
+                      if candidate in txt:
+                          prof_type = candidate
+                          break
+                  addition = f"{prof_type}? profile,"
+                  if "{" in new_params and "}" in new_params:
+                      new_params = re.sub(r"\}\s*$", f" {addition}}}", new_params.strip())
+                  elif new_params.strip():
+                      new_params = f"{new_params.strip()}, {{{addition}}}"
+                  else:
+                      new_params = f"{{{addition}}}"
+
+              # Ensure `profiles` exists if missing
+              if "profiles" not in new_params:
+                  list_type = "List<dynamic>"
+                  for candidate in ["List>", "List<KeyProfile>", "List<Profile>", "List<AppProfile>"]:
+                      if candidate in txt:
+                          list_type = candidate
+                          break
+                  addition = f"{list_type}? profiles,"
+                  if "{" in new_params and "}" in new_params:
+                      new_params = re.sub(r"\}\s*$", f" {addition}}}", new_params.strip())
+                  elif new_params.strip():
+                      new_params = f"{new_params.strip()}, {{{addition}}}"
+                  else:
+                      new_params = f"{{{addition}}}"
+
+              if new_params != params:
+                  updated_txt = txt[:ctor_match.start()] + f"{prefix}{new_params}{suffix}" + txt[ctor_match.end():]
+                  path.write_text(updated_txt, encoding="utf-8")
+
+          # Second, remove any `isArabic:` named arguments if target doesn't accept `isArabic`
           for dart_file in lib_dir.rglob("*.dart"):
               content = dart_file.read_text(encoding="utf-8", errors="ignore")
               original = content
-              for widget_name, allowed in accepts_is_arabic.items():
-                  if allowed:
-                      continue
+              for widget_name in screens:
                   pattern = re.compile(rf"(\b{widget_name}\s*\()([\s\S]*?)(\))")
                   def repl(match):
-                      prefix, args, suffix = match.group(1), match.group(2), match.group(3)
+                      p_pre, args, p_suf = match.group(1), match.group(2), match.group(3)
                       cleaned = re.sub(r",\s*isArabic\s*:\s*[^,)]+", "", args)
                       cleaned = re.sub(r"\bisArabic\s*:\s*[^,)]+\s*,\s*", "", cleaned)
                       cleaned = re.sub(r"^\s*isArabic\s*:\s*[^,)]+\s*$", "", cleaned)
-                      return f"{prefix}{cleaned}{suffix}"
+                      return f"{p_pre}{cleaned}{p_suf}"
                   content = pattern.sub(repl, content)
               if content != original:
                   dart_file.write_text(content, encoding="utf-8")
