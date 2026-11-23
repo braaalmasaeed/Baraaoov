@@ -1,31 +1,51 @@
 name: Build APK
-on: [push, workflow_dispatch]
+
+on:
+  push:
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.24.x"
           channel: "stable"
-      - run: |
+
+      - name: Prepare Flutter project and verify media
+        run: |
+          set -e
           mkdir -p extracted_dir flutter_app
-          ZIP_FILE=$(find . -maxdepth 2 -name "*muezzin*.zip" -o -name "*.zip" | head -n 1)
+
+          # Pick the newest zip file (prioritizing muezzin_project_updated.zip if present)
+          if [ -f "muezzin_project_updated.zip" ]; then
+            ZIP_FILE="muezzin_project_updated.zip"
+          else
+            ZIP_FILE=$(find . -maxdepth 3 -name "*.zip" -printf "%T@ %p\n" | sort -nr | head -n 1 | cut -d' ' -f2-)
+          fi
+
           echo "ZIP_FILE=$ZIP_FILE"
-          if [ -n "$ZIP_FILE" ]; then
+          if [ -n "$ZIP_FILE" ] && [ -f "$ZIP_FILE" ]; then
             unzip -o "$ZIP_FILE" -d extracted_dir
           fi
+
           flutter create flutter_app --org com.braa.muezzin --project-name muezzin
+
+          # Locate lib folder (inside extracted_dir first, then repository root)
           LIB_SOURCE=$(find extracted_dir -maxdepth 6 -type d -name "lib" -print | head -n 1)
           if [ -z "$LIB_SOURCE" ]; then
             LIB_SOURCE=$(find . -maxdepth 5 -not -path "./flutter_app*" -not -path "./.github*" -not -path "./extracted_dir*" -type d -name "lib" -print | head -n 1)
           fi
           echo "LIB_SOURCE=$LIB_SOURCE"
+
           if [ -n "$LIB_SOURCE" ]; then
             rm -rf flutter_app/lib/*
             cp -r "$LIB_SOURCE"/* flutter_app/lib/
@@ -33,22 +53,36 @@ jobs:
             echo "ERROR: lib folder not found in repository or zip!"
             exit 1
           fi
+
+          # Normalize Screens -> screens if needed
           if [ -d "flutter_app/lib/Screens" ]; then
             mkdir -p flutter_app/lib/screens
             cp -r flutter_app/lib/Screens/* flutter_app/lib/screens/
             rm -rf flutter_app/lib/Screens
           fi
+
+          # Locate assets folder (inside extracted_dir first, then repository root)
           ASSETS_SOURCE=$(find extracted_dir -maxdepth 6 -type d -name "assets" -print | head -n 1)
+          if [ -z "$ASSETS_SOURCE" ]; then
+            ASSETS_SOURCE=$(find . -maxdepth 5 -not -path "./flutter_app*" -not -path "./.github*" -not -path "./extracted_dir*" -type d -name "assets" -print | head -n 1)
+          fi
+          echo "ASSETS_SOURCE=$ASSETS_SOURCE"
+
           if [ -n "$ASSETS_SOURCE" ]; then
             mkdir -p flutter_app/assets
             cp -r "$ASSETS_SOURCE"/* flutter_app/assets/
           fi
+
+          # Copy analysis_options.yaml if present
           ANALYSIS_SOURCE=$(find extracted_dir -maxdepth 6 -type f -name "analysis_options.yaml" -print | head -n 1)
+          if [ -z "$ANALYSIS_SOURCE" ]; then
+            ANALYSIS_SOURCE=$(find . -maxdepth 5 -not -path "./flutter_app*" -not -path "./.github*" -not -path "./extracted_dir*" -type f -name "analysis_options.yaml" -print | head -n 1)
+          fi
           if [ -n "$ANALYSIS_SOURCE" ]; then
             cp "$ANALYSIS_SOURCE" flutter_app/analysis_options.yaml
           fi
-          echo "=== Files in flutter_app/lib ==="
-          find flutter_app/lib -type f
+
+          # Copy pubspec.yaml if present
           PUBSPEC_SOURCE=$(find extracted_dir -maxdepth 6 -type f -name "pubspec.yaml" -print | head -n 1)
           if [ -z "$PUBSPEC_SOURCE" ]; then
             PUBSPEC_SOURCE=$(find . -maxdepth 5 -not -path "./flutter_app*" -not -path "./.github*" -not -path "./extracted_dir*" -type f -name "pubspec.yaml" -print | head -n 1)
@@ -57,39 +91,65 @@ jobs:
           if [ -n "$PUBSPEC_SOURCE" ]; then
             cp "$PUBSPEC_SOURCE" flutter_app/pubspec.yaml
           fi
+
+          # Ensure main.dart exists
           if [ ! -f "flutter_app/lib/main.dart" ]; then
-            MAIN_FOUND=$(grep -rl "void main(" flutter_app/lib/ | head -n 1)
+            MAIN_FOUND=$(grep -rl "void main(" flutter_app/lib/ | head -n 1 || true)
             if [ -n "$MAIN_FOUND" ]; then
               cp "$MAIN_FOUND" flutter_app/lib/main.dart
             else
               echo "import 'package:flutter/material.dart'; import 'screens/home_screen.dart'; void main() { runApp(const MaterialApp(debugShowCheckedModeBanner: false, home: HomeScreen())); }" > flutter_app/lib/main.dart
             fi
           fi
-          cd flutter_app
+
+          # Debug print actual files and media counts
+          echo "=== Files in flutter_app/lib ==="
+          find flutter_app/lib -type f | sort
+          echo "=== Audio files in flutter_app/assets/audio ==="
+          ls -lh flutter_app/assets/audio 2>/dev/null || echo "No assets/audio directory"
+          echo "=== Mosque images in flutter_app/assets/images/mosques ==="
+          ls -lh flutter_app/assets/images/mosques 2>/dev/null || echo "No assets/images/mosques directory"
+
+      - name: Configure and build release APK
+        working-directory: flutter_app
+        run: |
+          set -e
+
+          # Remove asset declarations from pubspec.yaml only if assets folder is completely missing
           if [ ! -d "assets" ] && [ -f "pubspec.yaml" ]; then
             awk '/^[[:space:]]*assets:/{skip=1; next} skip && /^[[:space:]]*-/{next} skip && /^[[:space:]]+[A-Za-z0-9_\/-]+:/{next} skip && /^[[:space:]]*$/{next} {skip=0; print}' pubspec.yaml > pubspec.tmp && mv pubspec.tmp pubspec.yaml
           fi
+
+          # Enforce compileSdkVersion 35
           if [ -f "android/app/build.gradle" ]; then
             sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' android/app/build.gradle
             sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g' android/app/build.gradle
             sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 35/g' android/app/build.gradle
             sed -i 's/compileSdk = [0-9]\+/compileSdk = 35/g' android/app/build.gradle
           fi
+
           flutter pub add shared_preferences
+
+          # Normalize screen imports
           find lib/screens -name "*.dart" -exec sed -i "s|import 'screens/\([^']*\)';|import '\1';|g" {} +
           find lib/screens -name "*.dart" -exec sed -i 's|import "screens/\([^"]*\)";|import "\1";|g' {} +
           find lib -name "*.dart" -exec sed -i "s|screens/settings/settings_screen\.dart|screens/settings_screen.dart|g" {} +
+
           for scr in home_screen.dart quran_screen.dart azkar_screen.dart settings_screen.dart alarm_screen.dart; do
             find lib -name "*.dart" -exec sed -i "s|import 'lib/$scr';|import 'screens/$scr';|g" {} +
             find lib -name "*.dart" -exec sed -i "s|import \"lib/$scr\";|import \"screens/$scr\";|g" {} +
           done
+
           if [ -f "lib/services/background_prayer_service.dart" ]; then
             sed -i "s|import 'screens/alarm_screen.dart';|import '../screens/alarm_screen.dart';|g" lib/services/background_prayer_service.dart
             sed -i 's|import "screens/alarm_screen.dart";|import "../screens/alarm_screen.dart";|g' lib/services/background_prayer_service.dart
           fi
+
           find lib -name "*.dart" -exec sed -i 's/const Color(stringToColor(/Color(stringToColor(/g' {} +
+
           flutter pub get
           flutter build apk --release
+
       - uses: actions/upload-artifact@v4
         with:
           name: muezzin-apk
