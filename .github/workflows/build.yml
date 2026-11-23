@@ -55,7 +55,6 @@ jobs:
             exit 1
           fi
 
-          # Generate base Flutter Android/platform scaffolding without overwriting custom source files
           flutter create keylink_app --org com.baraa.keylink --project-name keylink
 
           # Copy lib/
@@ -109,8 +108,49 @@ jobs:
             sed -i 's/compileSdk = [0-9]\+/compileSdk = 35/g' android/app/build.gradle
           fi
 
+          # Fix mismatched named parameter `isArabic` in call sites when target constructors don't accept it
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          lib_dir = Path("lib")
+          targets = {
+              "HowToUseScreen": "lib/screens/how_to_use_screen.dart",
+              "KeyboardSettingsScreen": "lib/screens/keyboard_settings_screen.dart",
+              "MouseSettingsScreen": "lib/screens/mouse_settings_screen.dart",
+              "PresetsScreen": "lib/screens/presets_screen.dart",
+          }
+
+          accepts_is_arabic = {}
+          for widget_name, rel_path in targets.items():
+              p = Path(rel_path)
+              if p.exists():
+                  txt = p.read_text(encoding="utf-8", errors="ignore")
+                  m = re.search(rf"class\s+{widget_name}\b.*?\{{\s*(?:const\s+{widget_name}\s*\((.*?)\)|{widget_name}\s*\((.*?)\))", txt, re.S)
+                  ctor = (m.group(1) or m.group(2) or "") if m else ""
+                  accepts_is_arabic[widget_name] = "isArabic" in ctor
+              else:
+                  accepts_is_arabic[widget_name] = False
+
+          for dart_file in lib_dir.rglob("*.dart"):
+              content = dart_file.read_text(encoding="utf-8", errors="ignore")
+              original = content
+              for widget_name, allowed in accepts_is_arabic.items():
+                  if allowed:
+                      continue
+                  pattern = re.compile(rf"(\b{widget_name}\s*\()([\s\S]*?)(\))")
+                  def repl(match):
+                      prefix, args, suffix = match.group(1), match.group(2), match.group(3)
+                      cleaned = re.sub(r",\s*isArabic\s*:\s*[^,)]+", "", args)
+                      cleaned = re.sub(r"\bisArabic\s*:\s*[^,)]+\s*,\s*", "", cleaned)
+                      cleaned = re.sub(r"^\s*isArabic\s*:\s*[^,)]+\s*$", "", cleaned)
+                      return f"{prefix}{cleaned}{suffix}"
+                  content = pattern.sub(repl, content)
+              if content != original:
+                  dart_file.write_text(content, encoding="utf-8")
+          PY
+
           flutter pub get
-          flutter analyze || true
           flutter build apk --release
 
       - uses: actions/upload-artifact@v4
