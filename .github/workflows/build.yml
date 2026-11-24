@@ -65,7 +65,7 @@ jobs:
           fi
 
           echo "Detected PROJ_ROOT=$PROJ_ROOT"
-          if [ -z "$PROJ_ROOT" ] || [ ! -f "$PROJ_ROOT/pubspec.yaml" ]; then
+          if [ -z "$PROJ_ROOT" ] \vert{}\vert{} [ ! -f "$PROJ_ROOT/pubspec.yaml" ]; then
             echo "ERROR: pubspec.yaml not found for KeyLink."
             exit 1
           fi
@@ -127,11 +127,10 @@ jobs:
           import xml.etree.ElementTree as ET
           from pathlib import Path
 
-          # Ensure ic_launcher & styles.xml exist if missing
           res_dir = Path("android/app/src/main/res")
           res_dir.mkdir(parents=True, exist_ok=True)
 
-          # 1x1 valid PNG fallback for ic_launcher if no mipmap icon exists
+          # Ensure ic_launcher exists if missing
           has_launcher = any(res_dir.glob("mipmap*/ic_launcher.*"))
           if not has_launcher:
               png_1x1 = base64.b64decode(
@@ -143,7 +142,7 @@ jobs:
                   (m_dir / "ic_launcher.png").write_bytes(png_1x1)
               print("Created fallback mipmap/ic_launcher.png resources.")
 
-          # Ensure styles.xml defines LaunchTheme and NormalTheme if missing
+          # Ensure LaunchTheme and NormalTheme exist if missing
           styles_path = res_dir / "values" / "styles.xml"
           styles_path.parent.mkdir(parents=True, exist_ok=True)
           need_styles = True
@@ -166,7 +165,7 @@ jobs:
               styles_path.write_text(fallback_styles, encoding="utf-8")
               print("Created fallback values/styles.xml with LaunchTheme and NormalTheme.")
 
-          # Sanitize and validate all XML files in android/app/src + strip deprecated `package=` from AndroidManifest.xml
+          # Sanitize all XML files in android/app/src + strip deprecated `package=` from AndroidManifest.xml
           src_dir = Path("android/app/src")
           if src_dir.exists():
               for xml_file in src_dir.rglob("*.xml"):
@@ -194,10 +193,38 @@ jobs:
                               '<?xml version="1.0" encoding="utf-8"?>\n'
                               '<resources>\n'
                               '    <string name="app_name">KeyLink</string>\n'
+                              '    <string name="accessibility_service_description">KeyLink Accessibility Service for keyboard and mouse mapping.</string>\n'
                               '</resources>\n'
                           )
                           xml_file.write_text(fallback_strings, encoding="utf-8")
-                          print("Replaced corrupted strings.xml with valid fallback.")
+                          print("Replaced corrupted strings.xml with valid fallback including accessibility_service_description.")
+
+          # Ensure `accessibility_service_description` exists in values/strings.xml
+          main_strings = res_dir / "values" / "strings.xml"
+          main_strings.parent.mkdir(parents=True, exist_ok=True)
+          desc_entry = '    <string name="accessibility_service_description">KeyLink Accessibility Service for keyboard and mouse mapping.</string>'
+          if main_strings.exists():
+              s_txt = main_strings.read_text(encoding="utf-8", errors="ignore")
+              if 'name="accessibility_service_description"' not in s_txt and "</resources>" in s_txt:
+                  s_txt = s_txt.replace("</resources>", f"{desc_entry}\n</resources>", 1)
+                  main_strings.write_text(s_txt, encoding="utf-8")
+                  print("Added missing accessibility_service_description to values/strings.xml.")
+          else:
+              main_strings.write_text(
+                  f'<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <string name="app_name">KeyLink</string>\n{desc_entry}\n</resources>\n',
+                  encoding="utf-8",
+              )
+
+          # Normalize accessibilityFlags in accessibility_service_config.xml if present
+          for cfg_file in src_dir.rglob("accessibility_service_config.xml"):
+              c_txt = cfg_file.read_text(encoding="utf-8", errors="ignore")
+              c_txt = re.sub(
+                  r'android:accessibilityFlags\s*=\s*"[^"]*"',
+                  'android:accessibilityFlags="flagDefault|flagRequestFilterKeyEvents|flagRetrieveInteractiveWindows"',
+                  c_txt,
+              )
+              cfg_file.write_text(c_txt, encoding="utf-8")
+              print(f"Normalized android:accessibilityFlags in {cfg_file}")
 
           # Add Maven Central mirror inside android/settings.gradle compatible with PREFER_SETTINGS
           settings_file = Path("android/settings.gradle")
@@ -216,7 +243,7 @@ jobs:
               if not screen_file.exists():
                   return set()
               text = screen_file.read_text(encoding="utf-8", errors="ignore")
-              m = re.search(rf"\b{re.escape(class_name)}\s*\(\s*\{{(.*?)\}}\s*(?::|\))", text, re.S)
+              m = re.search(rf"\b{re.escape(class_name)}\s*\(\s*\{{(.*?)\}}\s*(?::\vert{}\))", text, re.S)
               if not m:
                   return set()
               body = m.group(1)
@@ -352,7 +379,7 @@ jobs:
           if home_dart.exists():
               hm_txt = home_dart.read_text(encoding="utf-8", errors="ignore")
               hm_txt = re.sub(
-                  r"\bHowToUseScreen\s*\(\s*isArabic\s*:\s*(isAr|_isArabic|isArabic)\s*\)",
+                  r"\bHowToUseScreen\s*\(\s*isArabic\s*:\s*(isAr\vert{}_isArabic\vert{}isArabic)\s*\)",
                   r"HowToUseScreen(language: \1 ? 'ar' : 'en', onLanguageChanged: (_) {})",
                   hm_txt,
               )
@@ -362,36 +389,4 @@ jobs:
           screen_map = {
               "KeyboardSettingsScreen": screens_dir / "keyboard_settings_screen.dart",
               "MouseSettingsScreen": screens_dir / "mouse_settings_screen.dart",
-              "PresetsScreen": screens_dir / "presets_screen.dart",
-              "HowToUseScreen": screens_dir / "how_to_use_screen.dart",
-          }
-          for dart_file in Path("lib").rglob("*.dart"):
-              file_txt = dart_file.read_text(encoding="utf-8", errors="ignore")
-              new_txt = file_txt
-              for cls_name, s_path in screen_map.items():
-                  allowed = extract_constructor_params(s_path, cls_name)
-                  if allowed:
-                      new_txt = strip_unsupported_named_args(new_txt, cls_name, allowed)
-              if new_txt != file_txt:
-                  dart_file.write_text(new_txt, encoding="utf-8")
-          PY
-
-          flutter pub get
-
-          for attempt in 1 2 3; do
-            echo "Building release APK (attempt $attempt/3)..."
-            if flutter build apk --release; then
-              echo "APK build succeeded!"
-              exit 0
-            fi
-            echo "Build attempt $attempt failed, waiting 30s before retry..."
-            sleep 30
-          done
-          exit 1
-
-      - name: Upload KeyLink APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: keylink-apk
-          path: keylink_app/build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
+              "
