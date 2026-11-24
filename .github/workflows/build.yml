@@ -174,7 +174,7 @@ jobs:
                       r"\1language: _isArabic ? 'ar' : 'en'",
                       txt,
                   )
-              for bad_arg in ("profile", "activeProfile", "profiles", "onProfileChanged"):
+              for bad_arg in ("profile", "activeProfile", "profiles", "onProfileChanged", "onSelectProfile"):
                   txt = remove_named_arg(txt, bad_arg)
               main_dart.write_text(txt, encoding="utf-8")
 
