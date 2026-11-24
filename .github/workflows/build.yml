@@ -95,15 +95,25 @@ jobs:
           import re
           from pathlib import Path
 
-          for dart_file in Path("lib").rglob("*.dart"):
-              text = dart_file.read_text(encoding="utf-8", errors="ignore")
-              updated = re.sub(
-                  r"\bisArabic\s*:\s*(_isArabic|isAr|isArabic)\b",
-                  r"language: (\1 ? 'ar' : 'en')",
-                  text,
+          # 1. Remove `profiles:` named argument in lib/main.dart where unsupported
+          main_dart = Path("lib/main.dart")
+          if main_dart.exists():
+              txt = main_dart.read_text(encoding="utf-8", errors="ignore")
+              cleaned = re.sub(r"\bprofiles\s*:\s*_profiles\s*,?\s*", "", txt)
+              if cleaned != txt:
+                  main_dart.write_text(cleaned, encoding="utf-8")
+
+          # 2. Provide required `onLanguageChanged` on HowToUseScreen in lib/screens/home_screen.dart
+          home_dart = Path("lib/screens/home_screen.dart")
+          if home_dart.exists():
+              txt = home_dart.read_text(encoding="utf-8", errors="ignore")
+              patched = re.sub(
+                  r"(\bHowToUseScreen\s*\(\s*language\s*:\s*[^,)]+?)(\s*\))",
+                  r"\1, onLanguageChanged: (_) {}\2",
+                  txt,
               )
-              if updated != text:
-                  dart_file.write_text(updated, encoding="utf-8")
+              if patched != txt:
+                  home_dart.write_text(patched, encoding="utf-8")
           PY
 
           flutter pub get
@@ -113,3 +123,4 @@ jobs:
         with:
           name: keylink-apk
           path: keylink_app/build/app/outputs/flutter-apk/app-release.apk
+ 
