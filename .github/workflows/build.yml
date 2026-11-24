@@ -115,56 +115,118 @@ jobs:
           import re
           from pathlib import Path
 
-          def remove_named_arg(source: str, arg_name: str) -> str:
-              pattern = re.compile(rf"\b{arg_name}\s*:")
+          def extract_constructor_params(screen_file: Path, class_name: str) -> set[str]:
+              if not screen_file.exists():
+                  return set()
+              text = screen_file.read_text(encoding="utf-8", errors="ignore")
+              # Match `ClassName({...})` or `const ClassName({...})`
+              m = re.search(rf"\b{re.escape(class_name)}\s*\(\s*\{{(.*?)\}}\s*(?::|\))", text, re.S)
+              if not m:
+                  return set()
+              body = m.group(1)
+              params = {"key"}
+              for pm in re.finditer(r"\b(?:this|super)\.([A-Za-z_][A-Za-z0-9_]*)\b", body):
+                  params.add(pm.group(1))
+              for rm in re.finditer(r"\brequired\s+[A-Za-z0-9_<>, ?]+\s+([A-Za-z_][A-Za-z0-9_]*)\b", body):
+                  params.add(rm.group(1))
+              return params
+
+          def find_matching_paren(s: str, open_idx: int) -> int:
+              depth = 0
+              in_str = None
+              escape = False
+              for idx in range(open_idx, len(s)):
+                  ch = s[idx]
+                  if in_str:
+                      if escape:
+                          escape = False
+                      elif ch == "\\":
+                          escape = True
+                      elif ch == in_str:
+                          in_str = None
+                  else:
+                      if ch in ("'", '"'):
+                          in_str = ch
+                      elif ch == "(":
+                          depth += 1
+                      elif ch == ")":
+                          depth -= 1
+                          if depth == 0:
+                              return idx
+              return -1
+
+          def strip_unsupported_named_args(source: str, class_name: str, allowed_params: set[str]) -> str:
+              if not allowed_params:
+                  return source
+              pattern = re.compile(rf"\b{re.escape(class_name)}\s*\(")
+              out = []
+              pos = 0
               while True:
-                  m = pattern.search(source)
+                  m = pattern.search(source, pos)
                   if not m:
+                      out.append(source[pos:])
                       break
-                  start = m.start()
-                  i = m.end()
-                  depth_paren = 0
-                  depth_brace = 0
-                  depth_bracket = 0
+                  open_paren = source.find("(", m.start())
+                  close_paren = find_matching_paren(source, open_paren)
+                  if close_paren == -1:
+                      out.append(source[pos:])
+                      break
+                  out.append(source[pos:open_paren + 1])
+                  inner = source[open_paren + 1:close_paren]
+
+                  # Split top-level arguments inside inner
+                  args = []
+                  start = 0
+                  dp = db = dk = 0
                   in_str = None
-                  escape = False
-                  n = len(source)
-                  while i < n:
-                      ch = source[i]
+                  esc = False
+                  for idx, ch in enumerate(inner):
                       if in_str:
-                          if escape:
-                              escape = False
+                          if esc:
+                              esc = False
                           elif ch == "\\":
-                              escape = True
+                              esc = True
                           elif ch == in_str:
                               in_str = None
                       else:
                           if ch in ("'", '"'):
                               in_str = ch
                           elif ch == "(":
-                              depth_paren += 1
+                              dp += 1
                           elif ch == ")":
-                              if depth_paren == 0 and depth_brace == 0 and depth_bracket == 0:
-                                  break
-                              depth_paren -= 1
+                              dp -= 1
                           elif ch == "{":
-                              depth_brace += 1
+                              db += 1
                           elif ch == "}":
-                              depth_brace -= 1
+                              db -= 1
                           elif ch == "[":
-                              depth_bracket += 1
+                              dk += 1
                           elif ch == "]":
-                              depth_bracket -= 1
-                          elif ch == "," and depth_paren == 0 and depth_brace == 0 and depth_bracket == 0:
-                              i += 1
-                              break
-                      i += 1
-                  while i < n and source[i] in " \t\r\n":
-                      i += 1
-                  source = source[:start] + source[i:]
-              return source
+                              dk -= 1
+                          elif ch == "," and dp == 0 and db == 0 and dk == 0:
+                              args.append(inner[start:idx])
+                              start = idx + 1
+                  args.append(inner[start:])
 
-          # 1. Fix lib/main.dart cleanly
+                  kept_args = []
+                  for arg in args:
+                      stripped = arg.strip()
+                      if not stripped:
+                          continue
+                      nm = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", stripped)
+                      if nm:
+                          arg_name = nm.group(1)
+                          if arg_name not in allowed_params:
+                              print(f"Stripped unsupported arg '{arg_name}' from {class_name}")
+                              continue
+                      kept_args.append(arg.strip("\n"))
+
+                  out.append(", ".join(a.strip() for a in kept_args if a.strip()))
+                  out.append(")")
+                  pos = close_paren + 1
+              return "".join(out)
+
+          # 1. Normalize `isArabic:` -> `language:` in KeyboardSettingsScreen, MouseSettingsScreen, PresetsScreen
           main_dart = Path("lib/main.dart")
           if main_dart.exists():
               txt = main_dart.read_text(encoding="utf-8", errors="ignore")
@@ -174,8 +236,6 @@ jobs:
                       r"\1language: _isArabic ? 'ar' : 'en'",
                       txt,
                   )
-              for bad_arg in ("profile", "activeProfile", "profiles", "onProfileChanged", "onSelectProfile"):
-                  txt = remove_named_arg(txt, bad_arg)
               main_dart.write_text(txt, encoding="utf-8")
 
           # 2. Fix HowToUseScreen parameter & call in home_screen.dart
@@ -204,6 +264,24 @@ jobs:
                   hm_txt,
               )
               home_dart.write_text(hm_txt, encoding="utf-8")
+
+          # 3. Automatically reconcile constructor calls against actual constructors in lib/screens/
+          screens_dir = Path("lib/screens")
+          screen_map = {
+              "KeyboardSettingsScreen": screens_dir / "keyboard_settings_screen.dart",
+              "MouseSettingsScreen": screens_dir / "mouse_settings_screen.dart",
+              "PresetsScreen": screens_dir / "presets_screen.dart",
+              "HowToUseScreen": screens_dir / "how_to_use_screen.dart",
+          }
+          for dart_file in Path("lib").rglob("*.dart"):
+              file_txt = dart_file.read_text(encoding="utf-8", errors="ignore")
+              new_txt = file_txt
+              for cls_name, s_path in screen_map.items():
+                  allowed = extract_constructor_params(s_path, cls_name)
+                  if allowed:
+                      new_txt = strip_unsupported_named_args(new_txt, cls_name, allowed)
+              if new_txt != file_txt:
+                  dart_file.write_text(new_txt, encoding="utf-8")
           PY
 
           flutter pub get
@@ -225,3 +303,4 @@ jobs:
           name: keylink-apk
           path: keylink_app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+ 
