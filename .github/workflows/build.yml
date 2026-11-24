@@ -115,6 +115,7 @@ jobs:
           import re
           from pathlib import Path
 
+          # 1. Normalize `isArabic:` -> `language:` across lib/
           for dart_file in Path("lib").rglob("*.dart"):
               txt = dart_file.read_text(encoding="utf-8", errors="ignore")
               updated = re.sub(
@@ -122,16 +123,62 @@ jobs:
                   r"language: (\1 ? 'ar' : 'en')",
                   txt,
               )
-              if dart_file.name == "main.dart":
-                  updated = re.sub(r"\bprofiles\s*:\s*_profiles\s*,?\s*", "", updated)
-              if dart_file.name == "home_screen.dart":
-                  updated = re.sub(
-                      r"(\bHowToUseScreen\s*\(\s*language\s*:\s*[^,)]+?)(\s*\))",
-                      r"\1, onLanguageChanged: (_) {}\2",
-                      updated,
-                  )
               if updated != txt:
                   dart_file.write_text(updated, encoding="utf-8")
+
+          # 2. Fix mismatched named arguments in lib/main.dart
+          main_dart = Path("lib/main.dart")
+          if main_dart.exists():
+              txt = main_dart.read_text(encoding="utf-8", errors="ignore")
+              # Remove unsupported `language:` argument from HomeScreen(...)
+              txt = re.sub(
+                  r"(\bHomeScreen\s*\(\s*)language\s*:\s*[^,)]+\s*,?\s*",
+                  r"\1",
+                  txt,
+              )
+              # Remove unsupported `profile:` argument from KeyboardSettingsScreen(...)
+              txt = re.sub(
+                  r"(\bKeyboardSettingsScreen\s*\([^)]*?)\bprofile\s*:\s*[^,)]+\s*,?\s*",
+                  r"\1",
+                  txt,
+              )
+              # Remove unsupported `activeProfile:` argument from PresetsScreen(...)
+              txt = re.sub(
+                  r"(\bPresetsScreen\s*\([^)]*?)\bactiveProfile\s*:\s*[^,)]+\s*,?\s*",
+                  r"\1",
+                  txt,
+              )
+              # Clean trailing comma right before closing paren
+              txt = re.sub(r",\s*(\))", r"\1", txt)
+              main_dart.write_text(txt, encoding="utf-8")
+
+          # 3. Ensure HowToUseScreen has onLanguageChanged parameter & argument
+          how_to_use = Path("lib/screens/how_to_use_screen.dart")
+          if how_to_use.exists():
+              htxt = how_to_use.read_text(encoding="utf-8", errors="ignore")
+              if "onLanguageChanged" not in htxt:
+                  htxt = re.sub(
+                      r"(class\s+HowToUseScreen\s+extends\s+StatefulWidget\s*\{)",
+                      r"\1\n  final ValueChanged<String>? onLanguageChanged;",
+                      htxt,
+                  )
+                  htxt = re.sub(
+                      r"(const\s+HowToUseScreen\s*\(\s*\{[^}]*?)(\}\s*\))",
+                      r"\1, this.onLanguageChanged\2",
+                      htxt,
+                  )
+                  how_to_use.write_text(htxt, encoding="utf-8")
+
+          home_dart = Path("lib/screens/home_screen.dart")
+          if home_dart.exists():
+              hm_txt = home_dart.read_text(encoding="utf-8", errors="ignore")
+              if "HowToUseScreen(" in hm_txt and "onLanguageChanged:" not in hm_txt:
+                  hm_txt = re.sub(
+                      r"(\bHowToUseScreen\s*\(\s*language\s*:\s*[^,)]+?)(\s*\))",
+                      r"\1, onLanguageChanged: (_) {}\2",
+                      hm_txt,
+                  )
+                  home_dart.write_text(hm_txt, encoding="utf-8")
           PY
 
           flutter pub get
