@@ -116,21 +116,24 @@ jobs:
           import xml.etree.ElementTree as ET
           from pathlib import Path
 
-          # 1. Sanitize and validate all XML files in android/app/src (fixes Content is not allowed in prolog)
+          # 1. Sanitize and validate all XML files in android/app/src + strip deprecated `package=` from AndroidManifest.xml
           src_dir = Path("android/app/src")
           if src_dir.exists():
               for xml_file in src_dir.rglob("*.xml"):
                   raw = xml_file.read_bytes()
-                  # Strip UTF-8 BOM if present
                   if raw.startswith(b"\xef\xbb\xbf"):
                       raw = raw[3:]
                   text = raw.decode("utf-8", errors="ignore")
-                  # Strip any garbage or whitespace before first '<'
                   first_lt = text.find("<")
                   if first_lt > 0:
                       print(f"Stripped {first_lt} leading chars before '<' in {xml_file}")
                       text = text[first_lt:]
                   text = text.strip()
+                  if xml_file.name == "AndroidManifest.xml":
+                      cleaned_manifest = re.sub(r'\s+package\s*=\s*"[^"]*"', "", text)
+                      if cleaned_manifest != text:
+                          print(f"Removed deprecated package attribute from {xml_file}")
+                          text = cleaned_manifest
                   try:
                       ET.fromstring(text)
                       xml_file.write_text(text + "\n", encoding="utf-8")
