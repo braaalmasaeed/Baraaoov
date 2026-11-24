@@ -23,25 +23,71 @@ jobs:
       - name: Prepare KeyLink project
         run: |
           set -e
+          rm -rf extracted_dir keylink_app
           mkdir -p extracted_dir keylink_app
-          ZIP_FILE="KeyLink_full.zip"
-          [ -f "$ZIP_FILE" ] || ZIP_FILE=$(find . -maxdepth 3 -name "*KeyLink*.zip" | head -n 1 || true)
-          [ -n "$ZIP_FILE" ] && unzip -o "$ZIP_FILE" -d extracted_dir
 
-          PROJ_ROOT="extracted_dir"
-          [ -f "extracted_dir/pubspec.yaml" ] || PROJ_ROOT=$(dirname "$(find extracted_dir -maxdepth 5 -name pubspec.yaml | head -n 1)")
-          [ -f "$PROJ_ROOT/pubspec.yaml" ]
+          ZIP_FILE=""
+          if [ -f "KeyLink_full.zip" ]; then
+            ZIP_FILE="KeyLink_full.zip"
+          else
+            ZIP_FILE="$(find . -maxdepth 3 -name '*KeyLink*.zip' -type f | head -n 1 || true)"
+          fi
+
+          if [ -n "$ZIP_FILE" ] && [ -f "$ZIP_FILE" ]; then
+            echo "Extracting archive: $ZIP_FILE"
+            unzip -q -o "$ZIP_FILE" -d extracted_dir
+          fi
+
+          PROJ_ROOT=""
+          if [ -f "extracted_dir/pubspec.yaml" ]; then
+            PROJ_ROOT="extracted_dir"
+          else
+            FOUND_PUBSPEC="$(find extracted_dir -maxdepth 5 -name 'pubspec.yaml' -type f 2>/dev/null | head -n 1 || true)"
+            if [ -n "$FOUND_PUBSPEC" ]; then
+              PROJ_ROOT="$(dirname "$FOUND_PUBSPEC")"
+            elif [ -f "pubspec.yaml" ]; then
+              PROJ_ROOT="."
+            fi
+          fi
+
+          if [ -z "$PROJ_ROOT" ] || [ ! -f "$PROJ_ROOT/pubspec.yaml" ]; then
+            echo "ERROR: pubspec.yaml not found for KeyLink."
+            exit 1
+          fi
 
           flutter create keylink_app --org com.baraa.keylink --project-name keylink
-          [ -d "$PROJ_ROOT/lib" ] && rm -rf keylink_app/lib/* && cp -r "$PROJ_ROOT/lib"/* keylink_app/lib/
-          [ -d "$PROJ_ROOT/assets" ] && mkdir -p keylink_app/assets && cp -r "$PROJ_ROOT/assets"/* keylink_app/assets/
-          cp "$PROJ_ROOT/pubspec.yaml" keylink_app/pubspec.yaml
-          [ -f "$PROJ_ROOT/analysis_options.yaml" ] && cp "$PROJ_ROOT/analysis_options.yaml" keylink_app/analysis_options.yaml
-          [ -d "$PROJ_ROOT/android/app/src" ] && rm -rf keylink_app/android/app/src && cp -r "$PROJ_ROOT/android/app/src" keylink_app/android/app/src
-          [ -f "$PROJ_ROOT/android/app/build.gradle" ] && cp "$PROJ_ROOT/android/app/build.gradle" keylink_app/android/app/build.gradle
-          [ -f "$PROJ_ROOT/android/app/build.gradle.kts" ] && cp "$PROJ_ROOT/android/app/build.gradle.kts" keylink_app/android/app/build.gradle.kts
 
-      - name: Build APK
+          if [ -d "$PROJ_ROOT/lib" ]; then
+            rm -rf keylink_app/lib/*
+            cp -r "$PROJ_ROOT/lib"/. keylink_app/lib/
+          fi
+
+          if [ -d "$PROJ_ROOT/assets" ]; then
+            mkdir -p keylink_app/assets
+            cp -r "$PROJ_ROOT/assets"/. keylink_app/assets/
+          fi
+
+          cp "$PROJ_ROOT/pubspec.yaml" keylink_app/pubspec.yaml
+
+          if [ -f "$PROJ_ROOT/analysis_options.yaml" ]; then
+            cp "$PROJ_ROOT/analysis_options.yaml" keylink_app/analysis_options.yaml
+          fi
+
+          if [ -d "$PROJ_ROOT/android/app/src" ]; then
+            rm -rf keylink_app/android/app/src
+            mkdir -p keylink_app/android/app/src
+            cp -r "$PROJ_ROOT/android/app/src"/. keylink_app/android/app/src/
+          fi
+
+          if [ -f "$PROJ_ROOT/android/app/build.gradle" ]; then
+            cp "$PROJ_ROOT/android/app/build.gradle" keylink_app/android/app/build.gradle
+          fi
+
+          if [ -f "$PROJ_ROOT/android/app/build.gradle.kts" ]; then
+            cp "$PROJ_ROOT/android/app/build.gradle.kts" keylink_app/android/app/build.gradle.kts
+          fi
+
+      - name: Build release APK
         working-directory: keylink_app
         run: |
           set -e
