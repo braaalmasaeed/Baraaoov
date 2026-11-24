@@ -8,19 +8,53 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: subosito/flutter-action@v2
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.24.x"
           channel: "stable"
+          cache: true
 
-      - name: Prepare KeyLink project
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Configure Gradle Maven Central mirror fallback (avoid HTTP 429)
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat <<'EOF' > ~/.gradle/init.d/maven-mirror.gradle
+          allprojects {
+              buildscript {
+                  repositories {
+                      maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }
+                      google()
+                      mavenCentral()
+                  }
+              }
+              repositories {
+                  maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }
+                  google()
+                  mavenCentral()
+              }
+          }
+          EOF
+
+      - name: Prepare KeyLink project (Project Root Discovery)
         run: |
           set -e
           rm -rf extracted_dir keylink_app
@@ -34,7 +68,7 @@ jobs:
           fi
 
           if [ -n "$ZIP_FILE" ] && [ -f "$ZIP_FILE" ]; then
-            echo "Extracting archive: $ZIP_FILE"
+            echo "Found and extracting archive: $ZIP_FILE"
             unzip -q -o "$ZIP_FILE" -d extracted_dir
           fi
 
@@ -50,6 +84,7 @@ jobs:
             fi
           fi
 
+          echo "Detected PROJ_ROOT=$PROJ_ROOT"
           if [ -z "$PROJ_ROOT" ] || [ ! -f "$PROJ_ROOT/pubspec.yaml" ]; then
             echo "ERROR: pubspec.yaml not found for KeyLink."
             exit 1
@@ -87,6 +122,11 @@ jobs:
             cp "$PROJ_ROOT/android/app/build.gradle.kts" keylink_app/android/app/build.gradle.kts
           fi
 
+          echo "=== Verified keylink_app/lib files ==="
+          find keylink_app/lib -type f | sort
+          echo "=== Verified keylink_app/android/app/src files ==="
+          find keylink_app/android/app/src -type f 2>/dev/null | sort || true
+
       - name: Build release APK
         working-directory: keylink_app
         run: |
@@ -115,10 +155,21 @@ jobs:
           PY
 
           flutter pub get
-          flutter build apk --release
 
-      - uses: actions/upload-artifact@v4
+          for attempt in 1 2 3; do
+            echo "Building release APK (attempt $attempt/3)..."
+            if flutter build apk --release; then
+              echo "APK build succeeded!"
+              exit 0
+            fi
+            echo "Build attempt $attempt failed, waiting 15s before retry..."
+            sleep 15
+          done
+          exit 1
+
+      - name: Upload KeyLink APK artifact
+        uses: actions/upload-artifact@v4
         with:
           name: keylink-apk
           path: keylink_app/build/app/outputs/flutter-apk/app-release.apk
- 
+          if-no-files-found: error
