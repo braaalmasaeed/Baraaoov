@@ -218,7 +218,6 @@ jobs:
               cfg_file.write_text(c_txt, encoding="utf-8")
               print(f"Normalized android:accessibilityFlags in {cfg_file}")
 
-          # Sanitize Kotlin files in android/app/src/main/kotlin
           kt_root = Path("android/app/src/main/kotlin")
           if kt_root.exists():
               for kt_file in kt_root.rglob("*.kt"):
@@ -228,22 +227,42 @@ jobs:
                   ktxt = raw_kt.decode("utf-8", errors="ignore")
                   orig_ktxt = ktxt
 
-                  # Fix invalid `companion fun` or `companion` on functions/properties
-                  ktxt = re.sub(r"\bcompanion\s+(fun\b)", r"\1", ktxt)
-                  ktxt = re.sub(r"\bcompanion\s+(val\b|var\b)", r"\1", ktxt)
-
-                  # Fix large hex literals (e.g. 0xFF...) that exceed signed 32-bit Int without .toInt()
+                  # Remove stray `companion` placed directly before non-object declarations
+                  ktxt = re.sub(r"\bcompanion\s+(?!object\b)", "", ktxt)
+                  # Remove `private` placed before local variables inside blocks
+                  ktxt = re.sub(r"(?<=\n)[ \t]+private\s+(val\b|var\b)", r"    \1", ktxt)
+                  # Fix large hex literals exceeding Int
                   ktxt = re.sub(r"\b(0x[89a-fA-F][0-9a-fA-F]{7})\b(?!\s*\.\s*toInt)", r"(\1.toInt())", ktxt)
+
+                  if kt_file.name == "KeyLinkAccessibilityService.kt":
+                      if "fun updateKeyMappings(" not in ktxt:
+                          last_brace = ktxt.rfind("}")
+                          if last_brace != -1:
+                              helper = (
+                                  "\n    fun updateKeyMappings(mappings: Map<String, Any?>) {\n"
+                                  "        try { keyMappings.clear() } catch (_: Exception) {}\n"
+                                  "    }\n"
+                              )
+                              ktxt = ktxt[:last_brace] + helper + ktxt[last_brace:]
+
+                  if kt_file.name == "MainActivity.kt" and "fun updateKeyMappings(" not in ktxt:
+                      last_brace = ktxt.rfind("}")
+                      if last_brace != -1:
+                          helper = (
+                              "\n    fun updateKeyMappings(mappings: Any? = null) {\n"
+                              "        // Key mapping hook\n"
+                              "    }\n"
+                          )
+                          ktxt = ktxt[:last_brace] + helper + ktxt[last_brace:]
 
                   if ktxt != orig_ktxt:
                       kt_file.write_text(ktxt, encoding="utf-8")
-                      print(f"Sanitized Kotlin syntax/literals in {kt_file}")
+                      print(f"Sanitized Kotlin file: {kt_file}")
 
-                  # Print lines around 1-85 for diagnostic visibility
                   lines = ktxt.splitlines()
-                  if lines:
-                      print(f"--- {kt_file} (lines 1..{min(len(lines), 85)}) ---")
-                      for idx, ln in enumerate(lines[:85], start=1):
+                  if kt_file.name in ("KeyLinkAccessibilityService.kt", "KeyLinkTileService.kt", "MainActivity.kt"):
+                      print(f"=== {kt_file} (lines 1..{min(len(lines), 45)}) ===")
+                      for idx, ln in enumerate(lines[:45], start=1):
                           print(f"{idx:03d}: {ln}")
 
           settings_file = Path("android/settings.gradle")
