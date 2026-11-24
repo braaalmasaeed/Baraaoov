@@ -34,26 +34,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Configure Gradle Maven Central mirror fallback (avoid HTTP 429)
-        run: |
-          mkdir -p ~/.gradle/init.d
-          cat <<'EOF' > ~/.gradle/init.d/maven-mirror.gradle
-          allprojects {
-              buildscript {
-                  repositories {
-                      maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }
-                      google()
-                      mavenCentral()
-                  }
-              }
-              repositories {
-                  maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }
-                  google()
-                  mavenCentral()
-              }
-          }
-          EOF
-
       - name: Prepare KeyLink project (Project Root Discovery)
         run: |
           set -e
