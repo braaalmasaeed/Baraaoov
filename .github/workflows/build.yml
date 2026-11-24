@@ -91,6 +91,21 @@ jobs:
         working-directory: keylink_app
         run: |
           set -e
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          for dart_file in Path("lib").rglob("*.dart"):
+              text = dart_file.read_text(encoding="utf-8", errors="ignore")
+              updated = re.sub(
+                  r"\bisArabic\s*:\s*(_isArabic|isAr|isArabic)\b",
+                  r"language: (\1 ? 'ar' : 'en')",
+                  text,
+              )
+              if updated != text:
+                  dart_file.write_text(updated, encoding="utf-8")
+          PY
+
           flutter pub get
           flutter build apk --release
 
@@ -98,4 +113,3 @@ jobs:
         with:
           name: keylink-apk
           path: keylink_app/build/app/outputs/flutter-apk/app-release.apk
- 
