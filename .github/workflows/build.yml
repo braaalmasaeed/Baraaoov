@@ -113,9 +113,40 @@ jobs:
           set -e
           python3 - <<'PY'
           import re
+          import xml.etree.ElementTree as ET
           from pathlib import Path
 
-          # Add Maven Central mirror inside android/settings.gradle compatible with PREFER_SETTINGS
+          # 1. Sanitize and validate all XML files in android/app/src (fixes Content is not allowed in prolog)
+          src_dir = Path("android/app/src")
+          if src_dir.exists():
+              for xml_file in src_dir.rglob("*.xml"):
+                  raw = xml_file.read_bytes()
+                  # Strip UTF-8 BOM if present
+                  if raw.startswith(b"\xef\xbb\xbf"):
+                      raw = raw[3:]
+                  text = raw.decode("utf-8", errors="ignore")
+                  # Strip any garbage or whitespace before first '<'
+                  first_lt = text.find("<")
+                  if first_lt > 0:
+                      print(f"Stripped {first_lt} leading chars before '<' in {xml_file}")
+                      text = text[first_lt:]
+                  text = text.strip()
+                  try:
+                      ET.fromstring(text)
+                      xml_file.write_text(text + "\n", encoding="utf-8")
+                  except Exception as e:
+                      print(f"Warning: invalid XML in {xml_file}: {e}")
+                      if xml_file.name == "strings.xml":
+                          fallback_strings = (
+                              '<?xml version="1.0" encoding="utf-8"?>\n'
+                              '<resources>\n'
+                              '    <string name="app_name">KeyLink</string>\n'
+                              '</resources>\n'
+                          )
+                          xml_file.write_text(fallback_strings, encoding="utf-8")
+                          print("Replaced corrupted strings.xml with valid fallback.")
+
+          # 2. Add Maven Central mirror inside android/settings.gradle compatible with PREFER_SETTINGS
           settings_file = Path("android/settings.gradle")
           if settings_file.exists():
               stxt = settings_file.read_text(encoding="utf-8", errors="ignore")
