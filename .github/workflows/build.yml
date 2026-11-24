@@ -115,20 +115,67 @@ jobs:
           import re
           from pathlib import Path
 
-          # 1. Fix lib/main.dart cleanly (keep HomeScreen(isArabic: _isArabic, ...), convert others to language:)
+          def remove_named_arg(source: str, arg_name: str) -> str:
+              pattern = re.compile(rf"\b{arg_name}\s*:")
+              while True:
+                  m = pattern.search(source)
+                  if not m:
+                      break
+                  start = m.start()
+                  i = m.end()
+                  depth_paren = 0
+                  depth_brace = 0
+                  depth_bracket = 0
+                  in_str = None
+                  escape = False
+                  n = len(source)
+                  while i < n:
+                      ch = source[i]
+                      if in_str:
+                          if escape:
+                              escape = False
+                          elif ch == "\\":
+                              escape = True
+                          elif ch == in_str:
+                              in_str = None
+                      else:
+                          if ch in ("'", '"'):
+                              in_str = ch
+                          elif ch == "(":
+                              depth_paren += 1
+                          elif ch == ")":
+                              if depth_paren == 0 and depth_brace == 0 and depth_bracket == 0:
+                                  break
+                              depth_paren -= 1
+                          elif ch == "{":
+                              depth_brace += 1
+                          elif ch == "}":
+                              depth_brace -= 1
+                          elif ch == "[":
+                              depth_bracket += 1
+                          elif ch == "]":
+                              depth_bracket -= 1
+                          elif ch == "," and depth_paren == 0 and depth_brace == 0 and depth_bracket == 0:
+                              i += 1
+                              break
+                      i += 1
+                  while i < n and source[i] in " \t\r\n":
+                      i += 1
+                  source = source[:start] + source[i:]
+              return source
+
+          # 1. Fix lib/main.dart cleanly
           main_dart = Path("lib/main.dart")
           if main_dart.exists():
               txt = main_dart.read_text(encoding="utf-8", errors="ignore")
-              # Replace `isArabic: _isArabic` ONLY inside KeyboardSettingsScreen, MouseSettingsScreen, PresetsScreen
               for screen in ("KeyboardSettingsScreen", "MouseSettingsScreen", "PresetsScreen"):
                   txt = re.sub(
                       rf"({screen}\s*\([^)]*?)\bisArabic\s*:\s*_isArabic\b",
                       r"\1language: _isArabic ? 'ar' : 'en'",
                       txt,
                   )
-              # Remove unsupported `profile:` and `activeProfile:` lines/arguments cleanly
-              txt = re.sub(r"\bprofile\s*:\s*[^,\n)]+\s*,?\s*", "", txt)
-              txt = re.sub(r"\bactiveProfile\s*:\s*[^,\n)]+\s*,?\s*", "", txt)
+              for bad_arg in ("profile", "activeProfile", "profiles", "onProfileChanged"):
+                  txt = remove_named_arg(txt, bad_arg)
               main_dart.write_text(txt, encoding="utf-8")
 
           # 2. Fix HowToUseScreen parameter & call in home_screen.dart
