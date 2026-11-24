@@ -218,6 +218,34 @@ jobs:
               cfg_file.write_text(c_txt, encoding="utf-8")
               print(f"Normalized android:accessibilityFlags in {cfg_file}")
 
+          # Sanitize Kotlin files in android/app/src/main/kotlin
+          kt_root = Path("android/app/src/main/kotlin")
+          if kt_root.exists():
+              for kt_file in kt_root.rglob("*.kt"):
+                  raw_kt = kt_file.read_bytes()
+                  if raw_kt.startswith(b"\xef\xbb\xbf"):
+                      raw_kt = raw_kt[3:]
+                  ktxt = raw_kt.decode("utf-8", errors="ignore")
+                  orig_ktxt = ktxt
+
+                  # Fix invalid `companion fun` or `companion` on functions/properties
+                  ktxt = re.sub(r"\bcompanion\s+(fun\b)", r"\1", ktxt)
+                  ktxt = re.sub(r"\bcompanion\s+(val\b|var\b)", r"\1", ktxt)
+
+                  # Fix large hex literals (e.g. 0xFF...) that exceed signed 32-bit Int without .toInt()
+                  ktxt = re.sub(r"\b(0x[89a-fA-F][0-9a-fA-F]{7})\b(?!\s*\.\s*toInt)", r"(\1.toInt())", ktxt)
+
+                  if ktxt != orig_ktxt:
+                      kt_file.write_text(ktxt, encoding="utf-8")
+                      print(f"Sanitized Kotlin syntax/literals in {kt_file}")
+
+                  # Print lines around 1-85 for diagnostic visibility
+                  lines = ktxt.splitlines()
+                  if lines:
+                      print(f"--- {kt_file} (lines 1..{min(len(lines), 85)}) ---")
+                      for idx, ln in enumerate(lines[:85], start=1):
+                          print(f"{idx:03d}: {ln}")
+
           settings_file = Path("android/settings.gradle")
           if settings_file.exists():
               stxt = settings_file.read_text(encoding="utf-8", errors="ignore")
