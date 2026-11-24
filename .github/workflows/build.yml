@@ -115,11 +115,23 @@ jobs:
           import re
           from pathlib import Path
 
+          # Add Maven Central mirror inside android/settings.gradle compatible with PREFER_SETTINGS
+          settings_file = Path("android/settings.gradle")
+          if settings_file.exists():
+              stxt = settings_file.read_text(encoding="utf-8", errors="ignore")
+              mirror_line = 'maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }'
+              if mirror_line not in stxt:
+                  stxt = re.sub(
+                      r"(mavenCentral\(\))",
+                      rf"{mirror_line}\n        \1",
+                      stxt,
+                  )
+                  settings_file.write_text(stxt, encoding="utf-8")
+
           def extract_constructor_params(screen_file: Path, class_name: str) -> set[str]:
               if not screen_file.exists():
                   return set()
               text = screen_file.read_text(encoding="utf-8", errors="ignore")
-              # Match `ClassName({...})` or `const ClassName({...})`
               m = re.search(rf"\b{re.escape(class_name)}\s*\(\s*\{{(.*?)\}}\s*(?::|\))", text, re.S)
               if not m:
                   return set()
@@ -174,7 +186,6 @@ jobs:
                   out.append(source[pos:open_paren + 1])
                   inner = source[open_paren + 1:close_paren]
 
-                  # Split top-level arguments inside inner
                   args = []
                   start = 0
                   dp = db = dk = 0
@@ -226,7 +237,6 @@ jobs:
                   pos = close_paren + 1
               return "".join(out)
 
-          # 1. Normalize `isArabic:` -> `language:` in KeyboardSettingsScreen, MouseSettingsScreen, PresetsScreen
           main_dart = Path("lib/main.dart")
           if main_dart.exists():
               txt = main_dart.read_text(encoding="utf-8", errors="ignore")
@@ -238,7 +248,6 @@ jobs:
                   )
               main_dart.write_text(txt, encoding="utf-8")
 
-          # 2. Fix HowToUseScreen parameter & call in home_screen.dart
           how_to_use = Path("lib/screens/how_to_use_screen.dart")
           if how_to_use.exists():
               htxt = how_to_use.read_text(encoding="utf-8", errors="ignore")
@@ -265,7 +274,6 @@ jobs:
               )
               home_dart.write_text(hm_txt, encoding="utf-8")
 
-          # 3. Automatically reconcile constructor calls against actual constructors in lib/screens/
           screens_dir = Path("lib/screens")
           screen_map = {
               "KeyboardSettingsScreen": screens_dir / "keyboard_settings_screen.dart",
@@ -292,8 +300,8 @@ jobs:
               echo "APK build succeeded!"
               exit 0
             fi
-            echo "Build attempt $attempt failed, waiting 15s before retry..."
-            sleep 15
+            echo "Build attempt $attempt failed, waiting 30s before retry..."
+            sleep 30
           done
           exit 1
 
@@ -303,4 +311,3 @@ jobs:
           name: keylink-apk
           path: keylink_app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
- 
