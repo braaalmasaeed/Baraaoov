@@ -220,23 +220,30 @@ jobs:
 
           kt_root = Path("android/app/src/main/kotlin")
           if kt_root.exists():
-              for kt_file in kt_root.rglob("*.kt"):
+              for kt_file in sorted(kt_root.rglob("*.kt")):
                   raw_kt = kt_file.read_bytes()
                   if raw_kt.startswith(b"\xef\xbb\xbf"):
                       raw_kt = raw_kt[3:]
                   ktxt = raw_kt.decode("utf-8", errors="ignore")
-                  print(f"=== BEFORE FIX {kt_file.name} (1..30) ===")
-                  for idx, ln in enumerate(ktxt.splitlines()[:30], start=1):
+                  print(f"=== {kt_file.name} BEFORE FIX ===")
+                  for idx, ln in enumerate(ktxt.splitlines(), start=1):
                       print(f"{idx:03d}: {ln}")
 
                   # Fix large hex literals exceeding Int
                   ktxt = re.sub(r"\b(0x[89a-fA-F][0-9a-fA-F]{7})\b(?!\s*\.\s*toInt)", r"(\1.toInt())", ktxt)
 
                   if kt_file.name == "KeyLinkAccessibilityService.kt":
-                      # Repair malformed declaration lines inside class body
-                      ktxt = re.sub(r"(?m)^([ \t]*)(?:private\s+)?fun\s*\(", r"\1private fun onKeyEventHelper(", ktxt)
-                      ktxt = re.sub(r"(?m)^([ \t]*)private\s+([A-Za-z0-9_<>?]+)\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", r"\1private var \3: \2? = null", ktxt)
-                      ktxt = re.sub(r"(?m)^([ \t]*)private\s*$", r"", ktxt)
+                      fixed_lines = []
+                      for ln in ktxt.splitlines():
+                          s_ln = ln.strip()
+                          if s_ln == "private" or "companion" in s_ln and ("fun" in s_ln or "(" in s_ln):
+                              # Comment out broken declaration line so class structure stays valid
+                              fixed_lines.append("// FIXED_BROKEN_LINE: " + ln)
+                          elif re.match(r"^\s*private\s+(val|var)\b", ln) and "fun " not in ktxt[:ktxt.find(ln)+1]:
+                              fixed_lines.append(re.sub(r"^(\s*)private\s+", r"\1", ln))
+                          else:
+                              fixed_lines.append(ln)
+                      ktxt = "\n".join(fixed_lines) + "\n"
 
                       if "companion object" not in ktxt:
                           comp = (
@@ -268,7 +275,13 @@ jobs:
                               ktxt = ktxt[:rb] + extra + ktxt[rb:]
 
                   if kt_file.name == "KeyLinkTileService.kt":
-                      ktxt = re.sub(r"(?m)^([ \t]*)(?:override\s+)?fun\s*\(", r"\1override fun onClick(", ktxt)
+                      fixed_lines = []
+                      for ln in ktxt.splitlines():
+                          if "fun " in ln and "(" in ln and re.search(r"\bfun\s*\(", ln):
+                              fixed_lines.append("// FIXED_BROKEN_LINE: " + ln)
+                          else:
+                              fixed_lines.append(ln)
+                      ktxt = "\n".join(fixed_lines) + "\n"
                       opens = ktxt.count("{")
                       closes = ktxt.count("}")
                       if opens > closes:
@@ -285,6 +298,9 @@ jobs:
                           ktxt = ktxt[:rb] + extra + ktxt[rb:]
 
                   kt_file.write_text(ktxt, encoding="utf-8")
+                  print(f"=== {kt_file.name} AFTER FIX ===")
+                  for idx, ln in enumerate(ktxt.splitlines(), start=1):
+                      print(f"{idx:03d}: {ln}")
 
           settings_file = Path("android/settings.gradle")
           if settings_file.exists():
