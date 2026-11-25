@@ -110,11 +110,6 @@ jobs:
             cp "$PROJ_ROOT/android/app/build.gradle.kts" keylink_app/android/app/build.gradle.kts
           fi
 
-          echo "=== Verified keylink_app/lib files ==="
-          find keylink_app/lib -type f | sort
-          echo "=== Verified keylink_app/android/app/src files ==="
-          find keylink_app/android/app/src -type f 2>/dev/null | sort || true
-
       - name: Build release APK
         working-directory: keylink_app
         run: |
@@ -137,7 +132,6 @@ jobs:
                   m_dir = res_dir / mip
                   m_dir.mkdir(parents=True, exist_ok=True)
                   (m_dir / "ic_launcher.png").write_bytes(png_1x1)
-              print("Created fallback mipmap/ic_launcher.png resources.")
 
           styles_path = res_dir / "values" / "styles.xml"
           styles_path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,7 +153,6 @@ jobs:
                   '</resources>\n'
               )
               styles_path.write_text(fallback_styles, encoding="utf-8")
-              print("Created fallback values/styles.xml with LaunchTheme and NormalTheme.")
 
           src_dir = Path("android/app/src")
           if src_dir.exists():
@@ -170,7 +163,6 @@ jobs:
                   text = raw.decode("utf-8", errors="ignore")
                   first_lt = text.find("<")
                   if first_lt > 0:
-                      print(f"Stripped {first_lt} leading chars before '<' in {xml_file}")
                       text = text[first_lt:]
                   text = text.strip()
                   if xml_file.name == "AndroidManifest.xml":
@@ -178,8 +170,7 @@ jobs:
                   try:
                       ET.fromstring(text)
                       xml_file.write_text(text + "\n", encoding="utf-8")
-                  except Exception as e:
-                      print(f"Warning: invalid XML in {xml_file}: {e}")
+                  except Exception:
                       if xml_file.name == "strings.xml":
                           fallback_strings = (
                               '<?xml version="1.0" encoding="utf-8"?>\n'
@@ -189,7 +180,6 @@ jobs:
                               '</resources>\n'
                           )
                           xml_file.write_text(fallback_strings, encoding="utf-8")
-                          print("Replaced corrupted strings.xml with valid fallback.")
 
           main_strings = res_dir / "values" / "strings.xml"
           main_strings.parent.mkdir(parents=True, exist_ok=True)
@@ -199,7 +189,6 @@ jobs:
               if 'name="accessibility_service_description"' not in s_txt and "</resources>" in s_txt:
                   s_txt = s_txt.replace("</resources>", desc_entry + "\n</resources>", 1)
                   main_strings.write_text(s_txt, encoding="utf-8")
-                  print("Added missing accessibility_service_description to values/strings.xml.")
           else:
               main_strings.write_text(
                   '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <string name="app_name">KeyLink</string>\n'
@@ -216,96 +205,209 @@ jobs:
                   c_txt,
               )
               cfg_file.write_text(c_txt, encoding="utf-8")
-              print(f"Normalized android:accessibilityFlags in {cfg_file}")
 
           kt_root = Path("android/app/src/main/kotlin")
-          if kt_root.exists():
-              for kt_file in sorted(kt_root.rglob("*.kt")):
-                  raw_kt = kt_file.read_bytes()
-                  if raw_kt.startswith(b"\xef\xbb\xbf"):
-                      raw_kt = raw_kt[3:]
-                  ktxt = raw_kt.decode("utf-8", errors="ignore")
+          kt_root.mkdir(parents=True, exist_ok=True)
 
-                  # Fix large hex literals exceeding Int
-                  ktxt = re.sub(r"\b(0x[89a-fA-F][0-9a-fA-F]{7})\b(?!\s*\.\s*toInt)", r"(\1.toInt())", ktxt)
+          # Sanitize any other .kt files (such as OverlayService.kt) for large hex literals
+          for kt_file in kt_root.rglob("*.kt"):
+              if kt_file.name in ("KeyLinkAccessibilityService.kt", "KeyLinkTileService.kt", "MainActivity.kt"):
+                  continue
+              raw_kt = kt_file.read_bytes()
+              if raw_kt.startswith(b"\xef\xbb\xbf"):
+                  raw_kt = raw_kt[3:]
+              ktxt = raw_kt.decode("utf-8", errors="ignore")
+              ktxt = re.sub(r"\b(0x[89a-fA-F][0-9a-fA-F]{7})\b(?!\s*\.\s*toInt)", r"(\1.toInt())", ktxt)
+              kt_file.write_text(ktxt, encoding="utf-8")
 
-                  if kt_file.name == "KeyLinkAccessibilityService.kt":
-                      out_lines = []
-                      for ln in ktxt.splitlines():
-                          s = ln.strip()
-                          if "companion" in s and ("fun" in s or "(" in s):
-                              out_lines.append("    private fun brokenCompanionHook() {}")
-                          elif s == "private" or re.match(r"^private\s*$", s):
-                              out_lines.append("    // stripped stray private")
-                          elif re.match(r"^\s*private\s+(val|var)\b", ln) and not re.search(r"=\s*[^=\s]", ln):
-                              m_v = re.match(r"^(\s*)private\s+(val|var)\s+([A-Za-z_][A-Za-z0-9_]*)", ln)
-                              if m_v:
-                                  out_lines.append(f"{m_v.group(1)}private var {m_v.group(3)}: Any? = null")
-                              else:
-                                  out_lines.append(ln)
-                          else:
-                              out_lines.append(ln)
-                      ktxt = "\n".join(out_lines) + "\n"
+          # Detect package directory under kotlin root
+          pkg_dir = kt_root / "com" / "baraa" / "keylink"
+          existing_main = next(kt_root.rglob("MainActivity.kt"), None)
+          if existing_main:
+              pkg_dir = existing_main.parent
+          pkg_dir.mkdir(parents=True, exist_ok=True)
 
-                      ktxt = re.sub(r"\.first\s*\(\s*\{", ".first<Any?>({", ktxt)
+          acc_kt = pkg_dir / "KeyLinkAccessibilityService.kt"
+          acc_kt.write_text(
+              """package com.baraa.keylink
 
-                      if "companion object" not in ktxt:
-                          comp = (
-                              "\n    companion object {\n"
-                              "        var instance: KeyLinkAccessibilityService? = null\n"
-                              "        val keyMappings: MutableMap<String, Any?> = mutableMapOf()\n"
-                              "        val cancelledKeys: MutableSet<Int> = mutableSetOf()\n"
-                              "    }\n"
-                          )
-                          m_cls = re.search(r"class\s+KeyLinkAccessibilityService[^{]*\{", ktxt)
-                          if m_cls:
-                              ktxt = ktxt[:m_cls.end()] + comp + ktxt[m_cls.end():]
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
+import android.view.KeyEvent
+import android.view.accessibility.AccessibilityEvent
 
-                      rb = ktxt.rfind("}")
-                      if rb != -1:
-                          extra = ""
-                          if "fun dispatchTap(" not in ktxt:
-                              extra += "\n    fun dispatchTap(x: Float, y: Float) {}\n"
-                          if "fun dispatchHoldStart(" not in ktxt:
-                              extra += "\n    fun dispatchHoldStart(x: Float, y: Float) {}\n"
-                          if "fun updateKeyMappings(" not in ktxt:
-                              extra += (
-                                  "\n    fun updateKeyMappings(mappings: Any? = null) {\n"
-                                  "        if (mappings is Map<*, *>) {\n"
-                                  "            keyMappings.clear()\n"
-                                  "            for ((k, v) in mappings) {\n"
-                                  "                if (k != null) keyMappings[k.toString()] = v\n"
-                                  "            }\n"
-                                  "        }\n"
-                                  "    }\n"
-                              )
-                          if extra:
-                              ktxt = ktxt[:rb] + extra + ktxt[rb:]
+class KeyLinkAccessibilityService : AccessibilityService() {
 
-                  if kt_file.name == "KeyLinkTileService.kt":
-                      out_lines = []
-                      for ln in ktxt.splitlines():
-                          if re.search(r"\bfun\s*\(", ln):
-                              out_lines.append("    override fun onClick() {}")
-                          else:
-                              out_lines.append(ln)
-                      ktxt = "\n".join(out_lines) + "\n"
-                      opens = ktxt.count("{")
-                      closes = ktxt.count("}")
-                      if opens > closes:
-                          ktxt = ktxt + ("\n}" * (opens - closes))
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        instance = this
+    }
 
-                  if kt_file.name == "MainActivity.kt" and "fun updateKeyMappings(" not in ktxt:
-                      rb = ktxt.rfind("}")
-                      if rb != -1:
-                          extra = (
-                              "\n    fun updateKeyMappings(mappings: Any? = null) {\n"
-                              "        KeyLinkAccessibilityService.instance?.updateKeyMappings(mappings)\n"
-                              "    }\n"
-                          )
-                          ktxt = ktxt[:rb] + extra + ktxt[rb:]
+    override fun onDestroy() {
+        super.onDestroy()
+        if (instance === this) {
+            instance = null
+        }
+    }
 
-                  kt_file.write_text(ktxt, encoding="utf-8")
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // No-op
+    }
+
+    override fun onInterrupt() {
+        // No-op
+    }
+
+    override fun onKeyEvent(event: KeyEvent?): Boolean {
+        if (event == null) return false
+        val code = event.keyCode
+        if (cancelledKeys.contains(code)) {
+            if (event.action == KeyEvent.ACTION_UP) {
+                cancelledKeys.remove(code)
+            }
+            return false
+        }
+        return false
+    }
+
+    fun dispatchTap(x: Float, y: Float) {
+        try {
+            val path = Path().apply { moveTo(x, y) }
+            val stroke = GestureDescription.StrokeDescription(path, 0L, 50L)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            dispatchGesture(gesture, null, null)
+        } catch (_: Exception) {
+        }
+    }
+
+    fun dispatchHoldStart(x: Float, y: Float) {
+        try {
+            val path = Path().apply { moveTo(x, y) }
+            val stroke = GestureDescription.StrokeDescription(path, 0L, 500L)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            dispatchGesture(gesture, null, null)
+        } catch (_: Exception) {
+        }
+    }
+
+    companion object {
+        var instance: KeyLinkAccessibilityService? = null
+        val keyMappings: MutableMap<String, Any?> = mutableMapOf()
+        val cancelledKeys: MutableSet<Int> = mutableSetOf()
+
+        fun updateKeyMappings(mappings: Any? = null) {
+            if (mappings is Map<*, *>) {
+                keyMappings.clear()
+                for ((k, v) in mappings) {
+                    if (k != null) {
+                        keyMappings[k.toString()] = v
+                    }
+                }
+            }
+        }
+    }
+}
+""",
+              encoding="utf-8",
+          )
+
+          tile_kt = pkg_dir / "KeyLinkTileService.kt"
+          tile_kt.write_text(
+              """package com.baraa.keylink
+
+import android.content.Intent
+import android.os.Build
+import android.service.quicksettings.Tile
+import android.service.quicksettings.TileService
+import androidx.annotation.RequiresApi
+
+@RequiresApi(Build.VERSION_CODES.N)
+class KeyLinkTileService : TileService() {
+
+    override fun onStartListening() {
+        super.onStartListening()
+        qsTile?.let { tile ->
+            tile.state = if (KeyLinkAccessibilityService.instance != null) {
+                Tile.STATE_ACTIVE
+            } else {
+                Tile.STATE_INACTIVE
+            }
+            tile.updateTile()
+        }
+    }
+
+    override fun onClick() {
+        super.onClick()
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivityAndCollapse(intent)
+        } catch (_: Exception) {
+            startActivity(intent)
+        }
+    }
+}
+""",
+              encoding="utf-8",
+          )
+
+          main_kt = pkg_dir / "MainActivity.kt"
+          main_kt.write_text(
+              """package com.baraa.keylink
+
+import android.content.Intent
+import android.os.Bundle
+import android.provider.Settings
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+
+class MainActivity : FlutterActivity() {
+    private val channelName = "com.baraa.keylink/controls"
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "isAccessibilityEnabled" -> {
+                    result.success(KeyLinkAccessibilityService.instance != null)
+                }
+                "openAccessibilitySettings" -> {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    result.success(true)
+                }
+                "updateKeyMappings" -> {
+                    updateKeyMappings(call.arguments)
+                    result.success(true)
+                }
+                "dispatchTap" -> {
+                    val args = call.arguments as? Map<*, *>
+                    val x = (args?.get("x") as? Number)?.toFloat() ?: 0f
+                    val y = (args?.get("y") as? Number)?.toFloat() ?: 0f
+                    KeyLinkAccessibilityService.instance?.dispatchTap(x, y)
+                    result.success(true)
+                }
+                "dispatchHoldStart" -> {
+                    val args = call.arguments as? Map<*, *>
+                    val x = (args?.get("x") as? Number)?.toFloat() ?: 0f
+                    val y = (args?.get("y") as? Number)?.toFloat() ?: 0f
+                    KeyLinkAccessibilityService.instance?.dispatchHoldStart(x, y)
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    fun updateKeyMappings(mappings: Any? = null) {
+        KeyLinkAccessibilityService.updateKeyMappings(mappings)
+    }
+}
+""",
+              encoding="utf-8",
+          )
 
           settings_file = Path("android/settings.gradle")
           if settings_file.exists():
@@ -415,7 +517,6 @@ jobs:
                       if nm:
                           arg_name = nm.group(1)
                           if arg_name not in allowed_params:
-                              print(f"Stripped unsupported arg '{arg_name}' from {class_name}")
                               continue
                       kept_args.append(arg.strip("\n"))
 
@@ -481,17 +582,8 @@ jobs:
 
           python3 fix_build.py
           flutter pub get
-
-          for attempt in 1 2 3; do
-            echo "Building release APK (attempt $attempt/3)..."
-            if flutter build apk --release; then
-              echo "APK build succeeded!"
-              exit 0
-            fi
-            echo "Build attempt $attempt failed, waiting 30s before retry..."
-            sleep 30
-          done
-          exit 1
+          flutter build apk --release
+          ls -lh build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload KeyLink APK artifact
         uses: actions/upload-artifact@v4
