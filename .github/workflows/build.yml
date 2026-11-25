@@ -233,7 +233,7 @@ jobs:
                       out_lines = []
                       for ln in ktxt.splitlines():
                           s = ln.strip()
-                          if "companion" in s and "fun" in s:
+                          if "companion" in s and ("fun" in s or "(" in s):
                               out_lines.append("    private fun brokenCompanionHook() {}")
                           elif s == "private" or re.match(r"^private\s*$", s):
                               out_lines.append("    // stripped stray private")
@@ -247,7 +247,6 @@ jobs:
                               out_lines.append(ln)
                       ktxt = "\n".join(out_lines) + "\n"
 
-                      # Fix ambiguous `.first(...)` calls without explicit type arg
                       ktxt = re.sub(r"\.first\s*\(\s*\{", ".first<Any?>({", ktxt)
 
                       if "companion object" not in ktxt:
@@ -262,13 +261,16 @@ jobs:
                           if m_cls:
                               ktxt = ktxt[:m_cls.end()] + comp + ktxt[m_cls.end():]
 
-                      if "fun dispatchTap(" not in ktxt:
-                          rb = ktxt.rfind("}")
-                          if rb != -1:
-                              extra = (
-                                  "\n    fun dispatchTap(x: Float, y: Float) {}\n"
-                                  "    fun dispatchHoldStart(x: Float, y: Float) {}\n"
-                                  "    fun updateKeyMappings(mappings: Any? = null) {\n"
+                      rb = ktxt.rfind("}")
+                      if rb != -1:
+                          extra = ""
+                          if "fun dispatchTap(" not in ktxt:
+                              extra += "\n    fun dispatchTap(x: Float, y: Float) {}\n"
+                          if "fun dispatchHoldStart(" not in ktxt:
+                              extra += "\n    fun dispatchHoldStart(x: Float, y: Float) {}\n"
+                          if "fun updateKeyMappings(" not in ktxt:
+                              extra += (
+                                  "\n    fun updateKeyMappings(mappings: Any? = null) {\n"
                                   "        if (mappings is Map<*, *>) {\n"
                                   "            keyMappings.clear()\n"
                                   "            for ((k, v) in mappings) {\n"
@@ -277,6 +279,7 @@ jobs:
                                   "        }\n"
                                   "    }\n"
                               )
+                          if extra:
                               ktxt = ktxt[:rb] + extra + ktxt[rb:]
 
                   if kt_file.name == "KeyLinkTileService.kt":
