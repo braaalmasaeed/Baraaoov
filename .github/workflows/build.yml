@@ -225,36 +225,66 @@ jobs:
                   if raw_kt.startswith(b"\xef\xbb\xbf"):
                       raw_kt = raw_kt[3:]
                   ktxt = raw_kt.decode("utf-8", errors="ignore")
-                  orig_ktxt = ktxt
+                  print(f"=== BEFORE FIX {kt_file.name} (1..30) ===")
+                  for idx, ln in enumerate(ktxt.splitlines()[:30], start=1):
+                      print(f"{idx:03d}: {ln}")
 
-                  ktxt = re.sub(r"\bcompanion\s+(?!object\b)", "", ktxt)
-                  ktxt = re.sub(r"(?<=\n)[ \t]+private\s+(val\b|var\b)", r"    \1", ktxt)
+                  # Fix large hex literals exceeding Int
                   ktxt = re.sub(r"\b(0x[89a-fA-F][0-9a-fA-F]{7})\b(?!\s*\.\s*toInt)", r"(\1.toInt())", ktxt)
 
                   if kt_file.name == "KeyLinkAccessibilityService.kt":
-                      if "fun updateKeyMappings(" not in ktxt:
-                          last_brace = ktxt.rfind("}")
-                          if last_brace != -1:
-                              helper = (
-                                  "\n    fun updateKeyMappings(mappings: Map<String, Any?>) {\n"
-                                  "        try { keyMappings.clear() } catch (_: Exception) {}\n"
-                                  "    }\n"
-                              )
-                              ktxt = ktxt[:last_brace] + helper + ktxt[last_brace:]
+                      # Repair malformed declaration lines inside class body
+                      ktxt = re.sub(r"(?m)^([ \t]*)(?:private\s+)?fun\s*\(", r"\1private fun onKeyEventHelper(", ktxt)
+                      ktxt = re.sub(r"(?m)^([ \t]*)private\s+([A-Za-z0-9_<>?]+)\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", r"\1private var \3: \2? = null", ktxt)
+                      ktxt = re.sub(r"(?m)^([ \t]*)private\s*$", r"", ktxt)
 
-                  if kt_file.name == "MainActivity.kt" and "fun updateKeyMappings(" not in ktxt:
-                      last_brace = ktxt.rfind("}")
-                      if last_brace != -1:
-                          helper = (
-                              "\n    fun updateKeyMappings(mappings: Any? = null) {\n"
-                              "        // Key mapping hook\n"
+                      if "companion object" not in ktxt:
+                          comp = (
+                              "\n    companion object {\n"
+                              "        var instance: KeyLinkAccessibilityService? = null\n"
+                              "        val keyMappings: MutableMap<String, Any?> = mutableMapOf()\n"
+                              "        val cancelledKeys: MutableSet<Int> = mutableSetOf()\n"
                               "    }\n"
                           )
-                          ktxt = ktxt[:last_brace] + helper + ktxt[last_brace:]
+                          m_cls = re.search(r"class\s+KeyLinkAccessibilityService[^{]*\{", ktxt)
+                          if m_cls:
+                              ktxt = ktxt[:m_cls.end()] + comp + ktxt[m_cls.end():]
 
-                  if ktxt != orig_ktxt:
-                      kt_file.write_text(ktxt, encoding="utf-8")
-                      print(f"Sanitized Kotlin file: {kt_file}")
+                      if "fun dispatchTap(" not in ktxt:
+                          rb = ktxt.rfind("}")
+                          if rb != -1:
+                              extra = (
+                                  "\n    fun dispatchTap(x: Float, y: Float) {}\n"
+                                  "    fun dispatchHoldStart(x: Float, y: Float) {}\n"
+                                  "    fun updateKeyMappings(mappings: Any? = null) {\n"
+                                  "        if (mappings is Map<*, *>) {\n"
+                                  "            keyMappings.clear()\n"
+                                  "            for ((k, v) in mappings) {\n"
+                                  "                if (k != null) keyMappings[k.toString()] = v\n"
+                                  "            }\n"
+                                  "        }\n"
+                                  "    }\n"
+                              )
+                              ktxt = ktxt[:rb] + extra + ktxt[rb:]
+
+                  if kt_file.name == "KeyLinkTileService.kt":
+                      ktxt = re.sub(r"(?m)^([ \t]*)(?:override\s+)?fun\s*\(", r"\1override fun onClick(", ktxt)
+                      opens = ktxt.count("{")
+                      closes = ktxt.count("}")
+                      if opens > closes:
+                          ktxt = ktxt + ("\n}" * (opens - closes))
+
+                  if kt_file.name == "MainActivity.kt" and "fun updateKeyMappings(" not in ktxt:
+                      rb = ktxt.rfind("}")
+                      if rb != -1:
+                          extra = (
+                              "\n    fun updateKeyMappings(mappings: Any? = null) {\n"
+                              "        KeyLinkAccessibilityService.instance?.updateKeyMappings(mappings)\n"
+                              "    }\n"
+                          )
+                          ktxt = ktxt[:rb] + extra + ktxt[rb:]
+
+                  kt_file.write_text(ktxt, encoding="utf-8")
 
           settings_file = Path("android/settings.gradle")
           if settings_file.exists():
