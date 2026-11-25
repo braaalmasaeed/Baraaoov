@@ -14,7 +14,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Prepare KeyLink project
+      - name: Prepare KeyLink project and enforce Android v2 embedding
         shell: bash
         run: |
           set -e
@@ -31,6 +31,42 @@ jobs:
               cp -r "$PROJECT_DIR"/* . 2>/dev/null || true
             fi
           fi
+
+          python3 - << 'EOF'
+          import os, re
+
+          manifest_path = "android/app/src/main/AndroidManifest.xml"
+          if os.path.exists(manifest_path):
+              with open(manifest_path, "r", encoding="utf-8") as f:
+                  content = f.read()
+
+              content = re.sub(
+                  r'(<meta-data\s+android:name="flutterEmbedding"\s+android:value=")1("\s*/?>)',
+                  r'\g<1>2\2',
+                  content,
+              )
+
+              if 'android:name="flutterEmbedding"' not in content:
+                  meta_tag = '        <meta-data\n            android:name="flutterEmbedding"\n            android:value="2" />\n'
+                  if "</application>" in content:
+                      content = content.replace("</application>", meta_tag + "    </application>", 1)
+
+              with open(manifest_path, "w", encoding="utf-8") as f:
+                  f.write(content)
+              print("Updated AndroidManifest.xml with flutterEmbedding=2")
+
+          for root, _, files in os.walk("android/app/src/main"):
+              for fn in files:
+                  if fn.endswith((".kt", ".java")):
+                      p = os.path.join(root, fn)
+                      with open(p, "r", encoding="utf-8") as f:
+                          src = f.read()
+                      updated = src.replace("io.flutter.app.FlutterActivity", "io.flutter.embedding.android.FlutterActivity")
+                      if updated != src:
+                          with open(p, "w", encoding="utf-8") as f:
+                              f.write(updated)
+                          print("Updated v1 activity import in:", p)
+          EOF
 
           ls -la
 
