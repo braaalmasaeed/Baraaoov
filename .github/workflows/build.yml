@@ -21,19 +21,25 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Rebuild Android v2 files and build APK
+      - name: Rebuild Android v2, collect issues, and build APK
         run: |
-          set -e
           PROJECT_DIR=$(find app_src -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
           echo "Project directory: $PROJECT_DIR"
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR_REPORT | pubspec.yaml | not found under app_src"
+            exit 1
+          fi
           cd "$PROJECT_DIR"
+
+          LOG_FILE="/tmp/corelink_issues.log"
+          : > "$LOG_FILE"
 
           rm -rf /tmp/corelink_backup
           mkdir -p /tmp/corelink_backup/lib /tmp/corelink_backup/kotlin
-          [ -d "lib" ] && cp -r lib/* /tmp/corelink_backup/lib/ 2>/dev/null || true
-          [ -d "android/app/src/main/kotlin" ] && cp -r android/app/src/main/kotlin/* /tmp/corelink_backup/kotlin/ 2>/dev/null || true
+          cp -r lib/* /tmp/corelink_backup/lib/ 2>/dev/null || true
+          cp -r android/app/src/main/kotlin/* /tmp/corelink_backup/kotlin/ 2>/dev/null || true
 
-          flutter create --platforms=android .
+          flutter create --platforms=android . || echo "ISSUE | flutter create | failed to regenerate android platform" >> "$LOG_FILE"
 
           mkdir -p lib android/app/src/main/kotlin
           cp -r /tmp/corelink_backup/lib/* lib/ 2>/dev/null || true
@@ -42,29 +48,50 @@ jobs:
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
             PKG_NAME=$(grep -oE 'package="[^"]+"' "$MANIFEST" | head -n 1 | sed -E 's/package="([^"]+)"/\1/')
-            sed -i -E 's/[[:space:]]*package="[^"]*"//g' "$MANIFEST"
-            sed -i -E 's/[[:space:]]*android:roundIcon="[^"]*"//g' "$MANIFEST"
+            sed -i -E 's/[[:space:]]*package="[^"]*"//g' "$MANIFEST" || echo "ISSUE | $MANIFEST | failed removing package attribute" >> "$LOG_FILE"
+            sed -i -E 's/[[:space:]]*android:roundIcon="[^"]*"//g' "$MANIFEST" || echo "ISSUE | $MANIFEST | failed removing roundIcon" >> "$LOG_FILE"
             if ! grep -q 'flutterEmbedding' "$MANIFEST"; then
-              sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$MANIFEST"
+              sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$MANIFEST" || echo "ISSUE | $MANIFEST | failed adding flutterEmbedding=2" >> "$LOG_FILE"
             fi
             if [ -n "$PKG_NAME" ]; then
               for gradle_file in android/app/build.gradle android/app/build.gradle.kts; do
                 if [ -f "$gradle_file" ]; then
-                  sed -i -E "s/namespace[[:space:]]*=[[:space:]]*\"[^\"]+\"/namespace = \"$PKG_NAME\"/g; s/namespace[[:space:]]+'[^']+'/namespace '$PKG_NAME'/g" "$gradle_file"
+                  sed -i -E "s/namespace[[:space:]]*=[[:space:]]*\"[^\"]+\"/namespace = \"$PKG_NAME\"/g; s/namespace[[:space:]]+'[^']+'/namespace '$PKG_NAME'/g" "$gradle_file" || echo "ISSUE | $gradle_file | failed updating namespace" >> "$LOG_FILE"
                 fi
               done
             fi
+          else
+            echo "ISSUE | android/app/src/main/AndroidManifest.xml | file missing" >> "$LOG_FILE"
           fi
 
           if [ -f "lib/main.dart" ]; then
-            sed -i 's/Icons\.settings_input_mouse/Icons.mouse/g' "lib/main.dart"
-            perl -i -0777 -pe 's/\b(ElevatedButton|IconButton|TextButton|OutlinedButton)\s*\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)/my $x=$&; $x=~s!(?<![A-Za-z0-9_])onTap(\s*[:=])!onPressed$1!g; $x/ge; s/\bListTile\s*\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)/my $x=$&; $x=~s!(?<![A-Za-z0-9_])onPressed(\s*[:=])!onTap$1!g; $x/ge' "lib/main.dart"
+            sed -i 's/Icons\.settings_input_mouse/Icons.mouse/g' "lib/main.dart" || echo "ISSUE | lib/main.dart | failed replacing settings_input_mouse" >> "$LOG_FILE"
+            sed -i -E 's/\bonTap([[:space:]]*:)/onPressed\1/g' "lib/main.dart" || echo "ISSUE | lib/main.dart | failed replacing onTap" >> "$LOG_FILE"
           fi
 
-          flutter pub get
-          flutter build apk --release
+          flutter pub get || echo "ISSUE | pubspec.yaml | flutter pub get reported issues" >> "$LOG_FILE"
+
+          BUILD_OUT="/tmp/flutter_build.log"
+          flutter build apk --release >"$BUILD_OUT" 2>&1
+          BUILD_EXIT=$?
+          cat "$BUILD_OUT"
+
+          grep -nE "(Error:|error:|FAILURE:|Exception:|AAPT:|\[ERROR\])" "$BUILD_OUT" 2>/dev/null | head -n 40 >> "$LOG_FILE" || true
+
+          echo "=========================================="
+          echo "SUMMARY OF DETECTED ERRORS AND LOCATIONS:"
+          echo "=========================================="
+          if [ -s "$LOG_FILE" ]; then
+            cat "$LOG_FILE"
+          else
+            echo "No errors recorded."
+          fi
+          echo "=========================================="
+
+          exit "$BUILD_EXIT"
 
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: CoreLink-APK
