@@ -21,32 +21,47 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Prepare Android v2 embedding and build APK
+      - name: Fix embedding and build APK
         run: |
           set -e
           PROJECT_DIR=$(find app_src -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
           echo "Project directory: $PROJECT_DIR"
           cd "$PROJECT_DIR"
 
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            sed -i -E 's/(name=["'\'']flutterEmbedding["'\''][^>]*value=["'\''])1(["'\''])/\12\2/g' "$MANIFEST"
-            if ! grep -q "flutterEmbedding" "$MANIFEST"; then
-              sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$MANIFEST"
-            fi
-          fi
+          python3 - <<'EOF'
+from pathlib import Path
+import re
 
-          for kt_file in $(find android/app/src/main -name "*.kt" 2>/dev/null); do
-            if grep -q "io\.flutter\.app\." "$kt_file" || ! grep -q "io\.flutter\.embedding\.android\." "$kt_file"; then
-              if grep -q "class MainActivity" "$kt_file"; then
-                PKG=$(grep -E "^[[:space:]]*package[[:space:]]+" "$kt_file" | head -n 1 | sed -E 's/^[[:space:]]*package[[:space:]]+([^ ;/]+).*/\1/')
-                [ -z "$PKG" ] && PKG="com.example.core_link"
-                printf 'package %s\n\nimport io.flutter.embedding.android.FlutterActivity\nimport io.flutter.embedding.engine.FlutterEngine\n\nclass MainActivity : FlutterActivity() {\n    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {\n        super.configureFlutterEngine(flutterEngine)\n    }\n}\n' "$PKG" > "$kt_file"
-              fi
-            fi
-          done
+for manifest in Path("android/app/src").rglob("AndroidManifest.xml"):
+    txt = manifest.read_text(encoding="utf-8", errors="ignore")
+    txt = re.sub(
+        r'(<meta-data\b[^>]*android:name=["\']flutterEmbedding["\'][^>]*android:value=["\'])[^"\']*(["\'][^>]*/?>)',
+        r'\g<1>2\g<2>',
+        txt,
+        flags=re.S
+    )
+    txt = re.sub(
+        r'(<meta-data\b[^>]*android:value=["\'])[^"\']*([^>]*android:name=["\']flutterEmbedding["\'][^>]*/?>)',
+        r'\g<1>2\g<2>',
+        txt,
+        flags=re.S
+    )
+    if "flutterEmbedding" not in txt and "</application>" in txt:
+        meta = '        <meta-data\n            android:name="flutterEmbedding"\n            android:value="2" />\n'
+        txt = txt.replace("</application>", meta + "    </application>", 1)
+    manifest.write_text(txt, encoding="utf-8")
 
-          flutter clean
+for kt in Path("android/app/src").rglob("MainActivity.kt"):
+    code = kt.read_text(encoding="utf-8", errors="ignore")
+    if "io.flutter.app." in code or "io.flutter.embedding.android.FlutterActivity" not in code:
+        m = re.search(r'^\s*package\s+([A-Za-z0-9_.]+)', code, re.M)
+        pkg = m.group(1) if m else "com.example.core_link"
+        kt.write_text(
+            f'package {pkg}\n\nimport io.flutter.embedding.android.FlutterActivity\n\nclass MainActivity : FlutterActivity()\n',
+            encoding="utf-8"
+        )
+EOF
+
           flutter pub get
           flutter build apk --release
 
@@ -55,3 +70,4 @@ jobs:
         with:
           name: CoreLink-APK
           path: app_src/**/build/app/outputs/flutter-apk/*.apk
+ 
