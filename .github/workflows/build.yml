@@ -28,35 +28,20 @@ jobs:
           echo "Project directory: $PROJECT_DIR"
           cd "$PROJECT_DIR"
 
-          cat <<'EOF' > fix_v2.py
-          from pathlib import Path
+          for manifest in $(find android/app/src -name "AndroidManifest.xml" 2>/dev/null); do
+            sed -i 's/android:value="1"/android:value="2"/g; s/android:value=\x271\x27/android:value=\x272\x27/g' "$manifest"
+            if ! grep -q "flutterEmbedding" "$manifest"; then
+              sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$manifest"
+            fi
+          done
 
-          for manifest in Path("android/app/src").rglob("AndroidManifest.xml"):
-              txt = manifest.read_text(encoding="utf-8", errors="ignore")
-              txt = txt.replace('android:value="1"', 'android:value="2"').replace("android:value='1'", "android:value='2'")
-              if "flutterEmbedding" not in txt and "</application>" in txt:
-                  meta = '        <meta-data android:name="flutterEmbedding" android:value="2" />\n'
-                  txt = txt.replace("</application>", meta + "    </application>", 1)
-              manifest.write_text(txt, encoding="utf-8")
-
-          for kt in Path("android/app/src").rglob("MainActivity.kt"):
-              code = kt.read_text(encoding="utf-8", errors="ignore")
-              if "io.flutter.app." in code or "io.flutter.embedding.android.FlutterActivity" not in code:
-                  pkg = "com.example.core_link"
-                  for line in code.splitlines():
-                      s = line.strip()
-                      if s.startswith("package "):
-                          pkg = s.replace("package ", "", 1).split(";")[0].strip()
-                          break
-                  kt.write_text(
-                      "package " + pkg + "\n\nimport io.flutter.embedding.android.FlutterActivity\n\nclass MainActivity : FlutterActivity()\n",
-                      encoding="utf-8"
-                  )
-          EOF
-
-          sed -i 's/^          //' fix_v2.py
-          python3 fix_v2.py
-          rm -f fix_v2.py
+          for kt in $(find android/app/src -name "MainActivity.kt" 2>/dev/null); do
+            if grep -q "io\.flutter\.app\." "$kt" || ! grep -q "io\.flutter\.embedding\.android\.FlutterActivity" "$kt"; then
+              PKG=$(grep -E '^[[:space:]]*package[[:space:]]+' "$kt" | head -n 1 | sed -E 's/^[[:space:]]*package[[:space:]]+([^ ;/]+).*/\1/')
+              [ -z "$PKG" ] && PKG="com.example.core_link"
+              printf 'package %s\n\nimport io.flutter.embedding.android.FlutterActivity\n\nclass MainActivity : FlutterActivity()\n' "$PKG" > "$kt"
+            fi
+          done
 
           flutter pub get
           flutter build apk --release
@@ -66,3 +51,4 @@ jobs:
         with:
           name: CoreLink-APK
           path: app_src/**/build/app/outputs/flutter-apk/*.apk
+ 
