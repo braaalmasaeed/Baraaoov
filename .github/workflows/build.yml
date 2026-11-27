@@ -22,16 +22,30 @@ jobs:
           cd "$PROJECT_DIR"
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
-            sed -i 's/android:name="flutterEmbedding"[^>]*android:value="1"/android:name="flutterEmbedding" android:value="2"/g' "$MANIFEST"
-            if ! grep -q 'android:name="flutterEmbedding"' "$MANIFEST"; then
-              sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$MANIFEST"
-            fi
+            python3 - <<'EOF'
+from pathlib import Path
+import re
+
+p = Path("android/app/src/main/AndroidManifest.xml")
+txt = p.read_text(encoding="utf-8")
+txt = re.sub(
+    r'(<meta-data\s+android:name="flutterEmbedding"\s+android:value=")[^"]+("\s*/?>)',
+    r'\g<1>2\g<2>',
+    txt,
+    flags=re.S
+)
+if 'android:name="flutterEmbedding"' not in txt and "</application>" in txt:
+    meta = '        <meta-data\n            android:name="flutterEmbedding"\n            android:value="2" />\n'
+    txt = txt.replace("</application>", meta + "    </application>", 1)
+p.write_text(txt, encoding="utf-8")
+EOF
           fi
-          for f in $(find android/app/src/main -name "MainActivity.kt" 2>/dev/null); do
-            if ! grep -q "io.flutter.embedding.android.FlutterActivity" "$f"; then
+          for f in $(find android/app/src/main -name "*.kt" -o -name "*.java" 2>/dev/null); do
+            if grep -qE "io\.flutter\.app\.FlutterActivity|extends FlutterActivity" "$f" && ! grep -q "io.flutter.embedding.android.FlutterActivity" "$f"; then
               PKG=$(grep -oE '^package [a-zA-Z0-9_.]+' "$f" | head -n 1 | awk '{print $2}')
               [ -z "$PKG" ] && PKG="com.example.core_link"
-              printf 'package %s\n\nimport io.flutter.embedding.android.FlutterActivity\nimport io.flutter.embedding.engine.FlutterEngine\n\nclass MainActivity : FlutterActivity() {\n    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {\n        super.configureFlutterEngine(flutterEngine)\n    }\n}\n' "$PKG" > "$f"
+              printf 'package %s\n\nimport io.flutter.embedding.android.FlutterActivity\nimport io.flutter.embedding.engine.FlutterEngine\n\nclass MainActivity : FlutterActivity() {\n    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {\n        super.configureFlutterEngine(flutterEngine)\n    }\n}\n' "$PKG" > "${f%.*}.kt"
+              [ "${f##*.}" = "java" ] && rm -f "$f"
             fi
           done
           flutter pub get
