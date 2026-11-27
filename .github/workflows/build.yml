@@ -44,6 +44,7 @@ jobs:
           if [ -f "$MANIFEST" ]; then
             PKG_NAME=$(grep -oE 'package="[^"]+"' "$MANIFEST" | head -n 1 | sed -E 's/package="([^"]+)"/\1/')
             sed -i -E 's/[[:space:]]*package="[^"]*"//g' "$MANIFEST"
+            sed -i -E 's/[[:space:]]*android:roundIcon="[^"]*"//g' "$MANIFEST"
             if ! grep -q 'flutterEmbedding' "$MANIFEST"; then
               sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$MANIFEST"
             fi
@@ -58,7 +59,7 @@ jobs:
 
           if [ -f "lib/main.dart" ]; then
             sed -i 's/Icons\.settings_input_mouse/Icons.mouse/g' "lib/main.dart"
-            sed -i -E '/ListTile\s*\(/,/\)\s*,?/{s/\bonPressed\s*:/onTap:/g}' "lib/main.dart"
+            python3 -c 'from pathlib import Path; import re; p = Path("lib/main.dart"); t = p.read_text(encoding="utf-8", errors="ignore"); t = re.sub(r"ListTile\s*\(.*?\n\s*\)", lambda m: re.sub(r"\bonPressed\s*:", "onTap:", m.group(0)), t, flags=re.S); p.write_text(t, encoding="utf-8")'
           fi
 
           flutter pub get
@@ -69,3 +70,4 @@ jobs:
         with:
           name: CoreLink-APK
           path: app_src/**/build/app/outputs/flutter-apk/*.apk
+ 
