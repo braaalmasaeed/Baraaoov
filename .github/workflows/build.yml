@@ -27,18 +27,14 @@ jobs:
           PROJECT_DIR=$(find app_src -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
           echo "Project directory: $PROJECT_DIR"
           cd "$PROJECT_DIR"
-
           rm -rf /tmp/corelink_backup
           mkdir -p /tmp/corelink_backup/lib /tmp/corelink_backup/kotlin
           [ -d "lib" ] && cp -r lib/* /tmp/corelink_backup/lib/ 2>/dev/null || true
           [ -d "android/app/src/main/kotlin" ] && cp -r android/app/src/main/kotlin/* /tmp/corelink_backup/kotlin/ 2>/dev/null || true
-
           flutter create --platforms=android .
-
           mkdir -p lib android/app/src/main/kotlin
           cp -r /tmp/corelink_backup/lib/* lib/ 2>/dev/null || true
           cp -rn /tmp/corelink_backup/kotlin/* android/app/src/main/kotlin/ 2>/dev/null || true
-
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
             PKG_NAME=$(grep -oE 'package="[^"]+"' "$MANIFEST" | head -n 1 | sed -E 's/package="([^"]+)"/\1/')
@@ -55,12 +51,8 @@ jobs:
               done
             fi
           fi
-
-          if [ -f "lib/main.dart" ]; then
-            sed -i 's/Icons\.settings_input_mouse/Icons.mouse/g' "lib/main.dart"
-            python3 -c 'from pathlib import Path; import re; p = Path("lib/main.dart"); t = p.read_text(encoding="utf-8", errors="ignore"); t = re.sub(r"(ElevatedButton|IconButton)\s*\(.*?\n\s*\)", lambda m: re.sub(r"\bonTap\s*:", "onPressed:", m.group(0)), t, flags=re.S); t = re.sub(r"ListTile\s*\(.*?\n\s*\)", lambda m: re.sub(r"\bonPressed\s*:", "onTap:", m.group(0)), t, flags=re.S); p.write_text(t, encoding="utf-8")'
-          fi
-
+          echo "ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCByZQpwID0gUGF0aCgibGliL21haW4uZGFydCIpCmlmIHAuZXhpc3RzKCk6CiAgICBzID0gcC5yZWFkX3RleHQoZW5jb2Rpbmc9InV0Zi04IiwgZXJyb3JzPSJpZ25vcmUiKQogICAgcyA9IHMucmVwbGFjZSgiSWNvbnMuc2V0dGluZ3NfaW5wdXRfbW91c2UiLCAiSWNvbnMubW91c2UiKQogICAgZGVmIGZpeF93KHQsIG5hbWVzLCBvbGRfcCwgbmV3X3ApOgogICAgICAgIG91dCwgaiA9IFtdLCAwCiAgICAgICAgcGF0ID0gcmUuY29tcGlsZShyIlxidyg/OiIgKyAifCIuam9pbihuYW1lcykgKyByIilccypcKCIpCiAgICAgICAgd2hpbGUgaiA8IGxlbih0KToKICAgICAgICAgICAgbSA9IHBhdC5zZWFyY2godCwgaikKICAgICAgICAgICAgaWYgbm90IG06CiAgICAgICAgICAgICAgICBvdXQuYXBwZW5kKHRbalpdKQogICAgICAgICAgICAgICAgYnJlYWsKICAgICAgICAgICAgb3V0LmFwcGVuZCh0W2o6bS5zdGFydCgpXSkKICAgICAgICAgICAgaywgZCA9IG0uZW5kKCkgLSAxLCAwCiAgICAgICAgICAgIHdoaWxlIGsgPCBsZW4odCk6CiAgICAgICAgICAgICAgICBpZiB0W2tdID09ICIoIjogZCArPSAxCiAgICAgICAgICAgICAgICBlbGlmIHRba10gPT0gIikiOgogICAgICAgICAgICAgICAgICAgIGQgLT0gMQogICAgICAgICAgICAgICAgICAgIGlmIGQgPT0gMDoKICAgICAgICAgICAgICAgICAgICAgICAgayArPSAxCiAgICAgICAgICAgICAgICAgICAgICAgIGJyZWFrCiAgICAgICAgICAgICAgICBrICs9IDEKICAgICAgICAgICAgYmxrID0gdFttLnN0YXJ0KCk6a10KICAgICAgICAgICAgYmxrID0gcmUuc3ViKHIiKD88IVtBLVphLXowLTlfXSkiICsgcmUuZXNjYXBlKG9sZF9wKSArIHIiKFxzKjp8XHMqPSkiLCBuZXdfcCArIHIiXDEiLCBibGspCiAgICAgICAgICAgIG91dC5hcHBlbmQoYmxrKQogICAgICAgICAgICBqID0gawogICAgICAgIHJldHVybiAiIi5qb2luKG91dCkKICAgIHMgPSBmaXhfdzhzLCBbIkVsZXZhdGVkQnV0dG9uIiwgIkljb25CdXR0b24iLCAiVGV4dEJ1dHRvbiIsICJPdXRsaW5lZEJ1dHRvbiJdLCAib25UYXAiLCAib25QcmVzc2VkIikKICAgIHMgPSBmaXhfdzhzLCBbIkxpc3RUaWxlIl0sICJvblByZXNzZWQiLCAib25UYXAiKQogICAgcC53cml0ZV90ZXh0KHMsIGVuY29kaW5nPSJ1dGYtOCIpCg==" | base64 -d > /tmp/fix.py
+          python3 /tmp/fix.py
           flutter pub get
           flutter build apk --release
 
@@ -69,4 +61,3 @@ jobs:
         with:
           name: CoreLink-APK
           path: app_src/**/build/app/outputs/flutter-apk/*.apk
- 
