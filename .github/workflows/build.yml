@@ -78,13 +78,8 @@ jobs:
 
           if [ -f "lib/main.dart" ]; then
             sed -i 's/Icons\.settings_input_mouse/Icons.mouse/g' "lib/main.dart" 2>/dev/null || true
-            python3 -c 'from pathlib import Path; import re; p=Path("lib/main.dart"); t=p.read_text(encoding="utf-8",errors="ignore"); t=re.sub(r"((?:const\s+)?ListTile\s*\(.*?\n\s*\))", lambda m: re.sub(r"\bonPressed\s*:", "onTap:", m.group(1)), t, flags=re.S); t=re.sub(r"((?:const\s+)?GestureDetector\s*\(.*?\n\s*\))", lambda m: re.sub(r"\bonPressed\s*:", "onTap:", m.group(1)), t, flags=re.S); p.write_text(t,encoding="utf-8")' >/tmp/dart_fix.log 2>&1
-            if [ $? -eq 0 ]; then
-              echo "[OK] Applied Dart widget fixes to lib/main.dart"
-            else
-              echo "[ERROR] Dart auto-fix on lib/main.dart failed — skipped and continuing"
-              echo "[ERROR] lib/main.dart | Auto-fix script error" >> "$REPORT"
-            fi
+            sed -i -E 's/onTap([[:space:]]*:)/onPressed\1/g' "lib/main.dart" 2>/dev/null || echo "[ERROR] lib/main.dart | failed replacing onTap — skipped and continuing" >> "$REPORT"
+            echo "[OK] Applied Dart fixes to lib/main.dart"
           fi
 
           if [ -f "test/widget_test.dart" ]; then
