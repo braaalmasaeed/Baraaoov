@@ -41,8 +41,19 @@ jobs:
           fi
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ] && ! grep -q 'flutterEmbedding' "$MANIFEST"; then
-            sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$MANIFEST"
+          if [ -f "$MANIFEST" ]; then
+            PKG_NAME=$(grep -oE 'package="[^"]+"' "$MANIFEST" | head -n 1 | sed -E 's/package="([^"]+)"/\1/')
+            sed -i -E 's/[[:space:]]*package="[^"]*"//g' "$MANIFEST"
+            if ! grep -q 'flutterEmbedding' "$MANIFEST"; then
+              sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$MANIFEST"
+            fi
+            if [ -n "$PKG_NAME" ]; then
+              for gradle_file in android/app/build.gradle android/app/build.gradle.kts; do
+                if [ -f "$gradle_file" ]; then
+                  sed -i -E "s/namespace[[:space:]]*=[[:space:]]*\"[^\"]+\"/namespace = \"$PKG_NAME\"/g; s/namespace[[:space:]]+'[^']+'/namespace '$PKG_NAME'/g" "$gradle_file"
+                fi
+              done
+            fi
           fi
 
           flutter pub get
