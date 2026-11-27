@@ -16,22 +16,10 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-      - name: Ensure Android v2 Embedding & Build APK
+      - name: Build APK
         run: |
           PROJECT_DIR=$(find app_src -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
           cd "$PROJECT_DIR"
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ] && ! grep -q "flutterEmbedding" "$MANIFEST"; then
-            python3 - <<'EOF'
-from pathlib import Path
-p = Path("android/app/src/main/AndroidManifest.xml")
-text = p.read_text(encoding="utf-8")
-meta = '        <meta-data\n            android:name="flutterEmbedding"\n            android:value="2" />\n'
-if "</application>" in text:
-    text = text.replace("</application>", meta + "    </application>", 1)
-    p.write_text(text, encoding="utf-8")
-EOF
-          fi
           flutter pub get
           flutter build apk --release
       - name: Upload APK
@@ -39,4 +27,3 @@ EOF
         with:
           name: CoreLink-APK
           path: app_src/**/build/app/outputs/flutter-apk/*.apk
- 
