@@ -28,17 +28,16 @@ jobs:
           echo "Project directory: $PROJECT_DIR"
           cd "$PROJECT_DIR"
 
-          mkdir -p /tmp/kotlin_backup
-          if [ -d "android/app/src/main/kotlin" ]; then
-            cp -r android/app/src/main/kotlin/* /tmp/kotlin_backup/ 2>/dev/null || true
-          fi
+          rm -rf /tmp/corelink_backup
+          mkdir -p /tmp/corelink_backup/lib /tmp/corelink_backup/kotlin
+          [ -d "lib" ] && cp -r lib/* /tmp/corelink_backup/lib/ 2>/dev/null || true
+          [ -d "android/app/src/main/kotlin" ] && cp -r android/app/src/main/kotlin/* /tmp/corelink_backup/kotlin/ 2>/dev/null || true
 
           flutter create --platforms=android .
 
-          if [ -d "/tmp/kotlin_backup" ]; then
-            mkdir -p android/app/src/main/kotlin
-            cp -rn /tmp/kotlin_backup/* android/app/src/main/kotlin/ 2>/dev/null || true
-          fi
+          mkdir -p lib android/app/src/main/kotlin
+          cp -r /tmp/corelink_backup/lib/* lib/ 2>/dev/null || true
+          cp -rn /tmp/corelink_backup/kotlin/* android/app/src/main/kotlin/ 2>/dev/null || true
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
@@ -59,7 +58,7 @@ jobs:
 
           if [ -f "lib/main.dart" ]; then
             sed -i 's/Icons\.settings_input_mouse/Icons.mouse/g' "lib/main.dart"
-            python3 -c 'from pathlib import Path; import re; p = Path("lib/main.dart"); t = p.read_text(encoding="utf-8", errors="ignore"); t = re.sub(r"ListTile\s*\(.*?\n\s*\)", lambda m: re.sub(r"\bonPressed\s*:", "onTap:", m.group(0)), t, flags=re.S); p.write_text(t, encoding="utf-8")'
+            python3 -c 'from pathlib import Path, re; p = Path("lib/main.dart"); t = p.read_text(encoding="utf-8", errors="ignore"); t = re.sub(r"(ElevatedButton|IconButton)\s*\(.*?\n\s*\)", lambda m: re.sub(r"\bonTap\s*:", "onPressed:", m.group(0)), t, flags=re.S); t = re.sub(r"ListTile\s*\(.*?\n\s*\)", lambda m: re.sub(r"\bonPressed\s*:", "onTap:", m.group(0)), t, flags=re.S); p.write_text(t, encoding="utf-8")'
           fi
 
           flutter pub get
@@ -70,4 +69,3 @@ jobs:
         with:
           name: CoreLink-APK
           path: app_src/**/build/app/outputs/flutter-apk/*.apk
- 
