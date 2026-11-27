@@ -1,0 +1,29 @@
+name: Build CoreLink APK
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unzip CoreLink
+        run: |
+          mkdir -p app_src
+          unzip -q CoreLink.zip -d app_src
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+      - name: Build APK
+        run: |
+          PROJECT_DIR=$(find app_src -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
+          cd "$PROJECT_DIR"
+          flutter pub get
+          flutter build apk --release
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoreLink-APK
+          path: app_src/**/build/app/outputs/flutter-apk/*.apk
