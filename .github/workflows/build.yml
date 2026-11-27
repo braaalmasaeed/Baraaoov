@@ -56,6 +56,11 @@ jobs:
             fi
           fi
 
+          if [ -f "lib/main.dart" ]; then
+            sed -i 's/Icons\.settings_input_mouse/Icons.mouse/g' "lib/main.dart"
+            sed -i -E '/ListTile\s*\(/,/\)\s*,?/{s/\bonPressed\s*:/onTap:/g}' "lib/main.dart"
+          fi
+
           flutter pub get
           flutter build apk --release
 
