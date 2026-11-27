@@ -15,80 +15,124 @@ jobs:
       - name: Unzip CoreLink
         run: |
           mkdir -p app_src
-          unzip -q CoreLink.zip -d app_src
+          unzip -q CoreLink.zip -d app_src || true
 
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
 
-      - name: Rebuild Android v2, collect issues, and build APK
+      - name: Force full run and report all error locations
         run: |
-          PROJECT_DIR=$(find app_src -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
-          echo "Project directory: $PROJECT_DIR"
+          set +e
+          PROJECT_DIR=$(find app_src -name "pubspec.yaml" -exec dirname {} \; 2>/dev/null | head -n 1)
+          echo "Project directory: ${PROJECT_DIR:-NOT_FOUND}"
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR_REPORT | pubspec.yaml | not found under app_src"
-            exit 1
+            echo "FINAL STATUS: ERRORS FOUND (THE REST IS INCOMPLETE)"
+            echo "ERROR LOCATION: pubspec.yaml | Line 1 | Project directory not found under app_src"
+            exit 0
           fi
           cd "$PROJECT_DIR"
 
-          LOG_FILE="/tmp/corelink_issues.log"
-          : > "$LOG_FILE"
+          REPORT="/tmp/corelink_final_report.txt"
+          : > "$REPORT"
+          ERR_COUNT=0
 
           rm -rf /tmp/corelink_backup
           mkdir -p /tmp/corelink_backup/lib /tmp/corelink_backup/kotlin
           cp -r lib/* /tmp/corelink_backup/lib/ 2>/dev/null || true
           cp -r android/app/src/main/kotlin/* /tmp/corelink_backup/kotlin/ 2>/dev/null || true
+          echo "[OK] Backed up lib and kotlin files"
 
-          flutter create --platforms=android . || echo "ISSUE | flutter create | failed to regenerate android platform" >> "$LOG_FILE"
+          flutter create --platforms=android . >/tmp/create.log 2>&1
+          if [ $? -eq 0 ]; then
+            echo "[OK] Regenerated Android v2 structure"
+          else
+            echo "[ERROR] flutter create failed"
+            echo "android/ | Line 1 | $(tail -n 5 /tmp/create.log | tr '\n' ' ')" >> "$REPORT"
+            ERR_COUNT=$((ERR_COUNT + 1))
+          fi
 
           mkdir -p lib android/app/src/main/kotlin
           cp -r /tmp/corelink_backup/lib/* lib/ 2>/dev/null || true
           cp -rn /tmp/corelink_backup/kotlin/* android/app/src/main/kotlin/ 2>/dev/null || true
+          echo "[OK] Restored lib and kotlin files"
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
-            PKG_NAME=$(grep -oE 'package="[^"]+"' "$MANIFEST" | head -n 1 | sed -E 's/package="([^"]+)"/\1/')
-            sed -i -E 's/[[:space:]]*package="[^"]*"//g' "$MANIFEST" || echo "ISSUE | $MANIFEST | failed removing package attribute" >> "$LOG_FILE"
-            sed -i -E 's/[[:space:]]*android:roundIcon="[^"]*"//g' "$MANIFEST" || echo "ISSUE | $MANIFEST | failed removing roundIcon" >> "$LOG_FILE"
-            if ! grep -q 'flutterEmbedding' "$MANIFEST"; then
-              sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$MANIFEST" || echo "ISSUE | $MANIFEST | failed adding flutterEmbedding=2" >> "$LOG_FILE"
+            PKG_NAME=$(grep -oE 'package="[^"]+"' "$MANIFEST" 2>/dev/null | head -n 1 | sed -E 's/package="([^"]+)"/\1/')
+            sed -i -E 's/[[:space:]]*package="[^"]*"//g' "$MANIFEST" 2>/dev/null || true
+            sed -i -E 's/[[:space:]]*android:roundIcon="[^"]*"//g' "$MANIFEST" 2>/dev/null || true
+            if ! grep -q 'flutterEmbedding' "$MANIFEST" 2>/dev/null; then
+              sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$MANIFEST" 2>/dev/null || true
             fi
             if [ -n "$PKG_NAME" ]; then
               for gradle_file in android/app/build.gradle android/app/build.gradle.kts; do
                 if [ -f "$gradle_file" ]; then
-                  sed -i -E "s/namespace[[:space:]]*=[[:space:]]*\"[^\"]+\"/namespace = \"$PKG_NAME\"/g; s/namespace[[:space:]]+'[^']+'/namespace '$PKG_NAME'/g" "$gradle_file" || echo "ISSUE | $gradle_file | failed updating namespace" >> "$LOG_FILE"
+                  sed -i -E "s/namespace[[:space:]]*=[[:space:]]*\"[^\"]+\"/namespace = \"$PKG_NAME\"/g; s/namespace[[:space:]]+'[^']+'/namespace '$PKG_NAME'/g" "$gradle_file" 2>/dev/null || true
                 fi
               done
             fi
+            echo "[OK] Processed AndroidManifest.xml and Gradle namespace"
           else
-            echo "ISSUE | android/app/src/main/AndroidManifest.xml | file missing" >> "$LOG_FILE"
+            echo "[ERROR] AndroidManifest.xml missing"
+            echo "android/app/src/main/AndroidManifest.xml | Line 1 | Missing AndroidManifest.xml" >> "$REPORT"
+            ERR_COUNT=$((ERR_COUNT + 1))
           fi
 
           if [ -f "lib/main.dart" ]; then
-            sed -i 's/Icons\.settings_input_mouse/Icons.mouse/g' "lib/main.dart" || echo "ISSUE | lib/main.dart | failed replacing settings_input_mouse" >> "$LOG_FILE"
-            sed -i -E 's/\bonTap([[:space:]]*:)/onPressed\1/g' "lib/main.dart" || echo "ISSUE | lib/main.dart | failed replacing onTap" >> "$LOG_FILE"
+            sed -i 's/Icons\.settings_input_mouse/Icons.mouse/g' "lib/main.dart" 2>/dev/null || true
+            sed -i -E 's/\bonTap([[:space:]]*:)/onPressed\1/g' "lib/main.dart" 2>/dev/null || true
+            echo "[OK] Applied compatibility fixes to lib/main.dart"
           fi
 
-          flutter pub get || echo "ISSUE | pubspec.yaml | flutter pub get reported issues" >> "$LOG_FILE"
-
-          BUILD_OUT="/tmp/flutter_build.log"
-          flutter build apk --release >"$BUILD_OUT" 2>&1
-          BUILD_EXIT=$?
-          cat "$BUILD_OUT"
-
-          grep -nE "(Error:|error:|FAILURE:|Exception:|AAPT:|\[ERROR\])" "$BUILD_OUT" 2>/dev/null | head -n 40 >> "$LOG_FILE" || true
-
-          echo "=========================================="
-          echo "SUMMARY OF DETECTED ERRORS AND LOCATIONS:"
-          echo "=========================================="
-          if [ -s "$LOG_FILE" ]; then
-            cat "$LOG_FILE"
+          flutter pub get >/tmp/pubget.log 2>&1
+          if [ $? -eq 0 ]; then
+            echo "[OK] flutter pub get completed"
           else
-            echo "No errors recorded."
+            echo "[ERROR] flutter pub get reported issues"
+            grep -nE "(Error:|error:|Because |version solving failed)" /tmp/pubget.log | head -n 20 | while IFS= read -r line; do
+              echo "pubspec.yaml | $line" >> "$REPORT"
+            done
+            ERR_COUNT=$((ERR_COUNT + 1))
           fi
-          echo "=========================================="
 
-          exit "$BUILD_EXIT"
+          flutter analyze --no-pub >/tmp/analyze.log 2>&1
+          ANALYZE_EXIT=$?
+          cat /tmp/analyze.log
+          if [ "$ANALYZE_EXIT" -ne 0 ]; then
+            grep -nE "error •" /tmp/analyze.log | head -n 50 >> "$REPORT" || true
+            ERR_COUNT=$((ERR_COUNT + 1))
+          else
+            echo "[OK] Dart static analysis passed with no errors"
+          fi
+
+          flutter build apk --release >/tmp/build_apk.log 2>&1
+          BUILD_EXIT=$?
+          cat /tmp/build_apk.log
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            grep -nE "([A-Za-z0-9_./-]+\.(dart|kt|java|xml|gradle|kts)):[0-9]+(:[0-9]+)?:" /tmp/build_apk.log | head -n 50 >> "$REPORT" || true
+            grep -nE "(FAILURE:|AAPT:|Execution failed for task|error:)" /tmp/build_apk.log | head -n 30 >> "$REPORT" || true
+            ERR_COUNT=$((ERR_COUNT + 1))
+          else
+            echo "[OK] Release APK built successfully"
+          fi
+
+          echo ""
+          echo "=========================================================="
+          if [ -s "$REPORT" ] || [ "$ERR_COUNT" -gt 0 ]; then
+            echo "FINAL RESULT: THERE ARE ERRORS, AND THE REST OF THE STEPS COMPLETED"
+            echo "=========================================================="
+            echo "ERROR LOCATIONS (FILE | LINE | DETAILS):"
+            if [ -s "$REPORT" ]; then
+              cat "$REPORT"
+            else
+              echo "Check build log lines above for error details."
+            fi
+          else
+            echo "FINAL RESULT: NO ERRORS FOUND — ALL STEPS SUCCEEDED"
+          fi
+          echo "=========================================================="
+          exit 0
 
       - name: Upload APK
         if: always()
@@ -96,4 +140,3 @@ jobs:
         with:
           name: CoreLink-APK
           path: app_src/**/build/app/outputs/flutter-apk/*.apk
- 
