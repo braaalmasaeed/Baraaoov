@@ -20,6 +20,36 @@ jobs:
         run: |
           PROJECT_DIR=$(find app_src -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
           cd "$PROJECT_DIR"
+          python3 - <<'EOF'
+from pathlib import Path
+import re
+
+manifest = Path("android/app/src/main/AndroidManifest.xml")
+if manifest.exists():
+    txt = manifest.read_text(encoding="utf-8")
+    if "flutterEmbedding" not in txt and "</application>" in txt:
+        meta = '        <meta-data android:name="flutterEmbedding" android:value="2" />\n'
+        txt = txt.replace("</application>", meta + "    </application>", 1)
+        manifest.write_text(txt, encoding="utf-8")
+
+for kt in Path("android/app/src/main/kotlin").rglob("MainActivity.kt"):
+    code = kt.read_text(encoding="utf-8")
+    if "io.flutter.embedding.android.FlutterActivity" not in code:
+        pkg_match = re.search(r"^\s*package\s+([\w.]+)", code, re.M)
+        pkg = pkg_match.group(1) if pkg_match else "com.example.core_link"
+        new_code = f"""package {pkg}
+
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+
+class MainActivity : FlutterActivity() {{
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
+        super.configureFlutterEngine(flutterEngine)
+    }}
+}}
+"""
+        kt.write_text(new_code, encoding="utf-8")
+EOF
           flutter pub get
           flutter build apk --release
       - name: Upload APK
