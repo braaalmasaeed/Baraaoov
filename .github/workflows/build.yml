@@ -21,27 +21,29 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Fix embedding and build APK
+      - name: Rebuild Android v2 files and build APK
         run: |
           set -e
           PROJECT_DIR=$(find app_src -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
           echo "Project directory: $PROJECT_DIR"
           cd "$PROJECT_DIR"
 
-          for manifest in $(find android/app/src -name "AndroidManifest.xml" 2>/dev/null); do
-            sed -i 's/android:value="1"/android:value="2"/g; s/android:value=\x271\x27/android:value=\x272\x27/g' "$manifest"
-            if ! grep -q "flutterEmbedding" "$manifest"; then
-              sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$manifest"
-            fi
-          done
+          mkdir -p /tmp/kotlin_backup
+          if [ -d "android/app/src/main/kotlin" ]; then
+            cp -r android/app/src/main/kotlin/* /tmp/kotlin_backup/ 2>/dev/null || true
+          fi
 
-          for kt in $(find android/app/src -name "MainActivity.kt" 2>/dev/null); do
-            if grep -q "io\.flutter\.app\." "$kt" || ! grep -q "io\.flutter\.embedding\.android\.FlutterActivity" "$kt"; then
-              PKG=$(grep -E '^[[:space:]]*package[[:space:]]+' "$kt" | head -n 1 | sed -E 's/^[[:space:]]*package[[:space:]]+([^ ;/]+).*/\1/')
-              [ -z "$PKG" ] && PKG="com.example.core_link"
-              printf 'package %s\n\nimport io.flutter.embedding.android.FlutterActivity\n\nclass MainActivity : FlutterActivity()\n' "$PKG" > "$kt"
-            fi
-          done
+          flutter create --platforms=android .
+
+          if [ -d "/tmp/kotlin_backup" ]; then
+            mkdir -p android/app/src/main/kotlin
+            cp -rn /tmp/kotlin_backup/* android/app/src/main/kotlin/ 2>/dev/null || true
+          fi
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ] && ! grep -q 'flutterEmbedding' "$MANIFEST"; then
+            sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$MANIFEST"
+          fi
 
           flutter pub get
           flutter build apk --release
@@ -51,4 +53,3 @@ jobs:
         with:
           name: CoreLink-APK
           path: app_src/**/build/app/outputs/flutter-apk/*.apk
- 
