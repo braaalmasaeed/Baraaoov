@@ -78,13 +78,8 @@ jobs:
 
           if [ -f "lib/main.dart" ]; then
             sed -i 's/Icons\.settings_input_mouse/Icons.mouse/g' "lib/main.dart" 2>/dev/null || true
-            sed -i -E 's/onTap([[:space:]]*:)/onPressed\1/g' "lib/main.dart" 2>/dev/null || echo "[ERROR] lib/main.dart | failed replacing onTap — skipped and continuing" >> "$REPORT"
+            sed -i -E 's/([[:space:]]*)onPressed([[:space:]]*:)/\1onTap\2/g' "lib/main.dart" 2>/dev/null || echo "[ERROR] lib/main.dart | failed replacing onPressed inside widgets — skipped and continuing" >> "$REPORT"
             echo "[OK] Applied Dart fixes to lib/main.dart"
-          fi
-
-          if [ -f "test/widget_test.dart" ]; then
-            printf "import 'package:flutter_test/flutter_test.dart';\n\nvoid main() {\n  testWidgets('App smoke test', (WidgetTester tester) async {\n    expect(true, isTrue);\n  });\n}\n" > test/widget_test.dart || echo "[ERROR] test/widget_test.dart | failed update — skipped and continuing" >> "$REPORT"
-            echo "[OK] Sanitized test/widget_test.dart"
           fi
 
           flutter pub get >/tmp/pubget.log 2>&1
