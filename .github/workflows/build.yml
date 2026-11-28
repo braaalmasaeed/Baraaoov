@@ -78,7 +78,8 @@ jobs:
           p = Path("lib/main.dart")
           s = p.read_text(encoding="utf-8", errors="ignore")
           s = s.replace("Icons.settings_input_mouse", "Icons.mouse")
-          pat = re.compile(r"\b(ListTile|GestureDetector|InkWell)\s*\(")
+          pat = re.compile(r"\b(ElevatedButton|IconButton|TextButton|OutlinedButton|ListTile|GestureDetector|InkWell)(?:\.[A-Za-z0-9_]+)?\s*\(")
+          btns = {"ElevatedButton", "IconButton", "TextButton", "OutlinedButton"}
           out = []
           i = 0
           while i < len(s):
@@ -87,6 +88,7 @@ jobs:
                   out.append(s[i:])
                   break
               out.append(s[i:m.start()])
+              w = m.group(1)
               j = m.end() - 1
               d = 0
               while j < len(s):
@@ -99,14 +101,17 @@ jobs:
                           break
                   j += 1
               blk = s[m.start():j]
-              blk = re.sub(r"\bonPressed(\s*:)", r"onTap\1", blk)
+              if w in btns:
+                  blk = re.sub(r"\bonTap(\s*:)", r"onPressed\1", blk)
+              else:
+                  blk = re.sub(r"\bonPressed(\s*:)", r"onTap\1", blk)
               out.append(blk)
               i = j
           p.write_text("".join(out), encoding="utf-8")
           PYEOF
             python3 /tmp/patch_main.py >/tmp/dart_fix.log 2>&1
             if [ $? -eq 0 ]; then
-              echo "[OK] Patched ListTile/GestureDetector onPressed -> onTap in lib/main.dart"
+              echo "[OK] Patched button onPressed and widget onTap in lib/main.dart"
             else
               echo "[ERROR] Dart fix failed - continuing"
               echo "[ERROR] lib/main.dart | $(cat /tmp/dart_fix.log | tr '\n' ' ')" >> "$REPORT"
