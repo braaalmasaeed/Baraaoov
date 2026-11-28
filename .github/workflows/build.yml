@@ -1,176 +1,29 @@
-name: Build CoreLink APK
-
+name: Build APK
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
-
+  push:
+    branches: [main]
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Unzip CoreLink
-        run: |
-          mkdir -p app_src
-          unzip -q CoreLink.zip -d app_src || echo "[ERROR] Unzip failed - continuing"
-
-      - uses: subosito/flutter-action@v2
+      - name: Unzip project
+        run: unzip -q project.zip
+      - uses: actions/setup-java@v4
         with:
-          channel: 'stable'
-
-      - name: Fix errors with markers, continue all steps, and report
-        run: |
-          set +e
-          PROJECT_DIR=$(find app_src -name "pubspec.yaml" -exec dirname {} \; 2>/dev/null | head -n 1)
-          echo "Project directory: ${PROJECT_DIR:-NOT_FOUND}"
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "[ERROR] pubspec.yaml not found - continuing"
-            echo "FINAL RESULT: ERRORS FOUND (THE REST OF THE STEPS COMPLETED)"
-            exit 0
-          fi
-          cd "$PROJECT_DIR"
-          REPORT="/tmp/corelink_error_markers.log"
-          : > "$REPORT"
-          rm -rf /tmp/corelink_backup
-          mkdir -p /tmp/corelink_backup/lib /tmp/corelink_backup/kotlin
-          cp -r lib/* /tmp/corelink_backup/lib/ 2>/dev/null || echo "[ERROR] lib backup warning - continuing" >> "$REPORT"
-          cp -r android/app/src/main/kotlin/* /tmp/corelink_backup/kotlin/ 2>/dev/null || true
-          echo "[OK] Backed up lib and kotlin files"
-          flutter create --platforms=android . >/tmp/create.log 2>&1
-          if [ $? -eq 0 ]; then
-            echo "[OK] Regenerated Android v2 files"
-          else
-            echo "[ERROR] flutter create failed - continuing"
-            echo "[ERROR] android/ | flutter create failed" >> "$REPORT"
-          fi
-          mkdir -p lib android/app/src/main/kotlin
-          cp -r /tmp/corelink_backup/lib/* lib/ 2>/dev/null || echo "[ERROR] lib restore warning - continuing" >> "$REPORT"
-          cp -rn /tmp/corelink_backup/kotlin/* android/app/src/main/kotlin/ 2>/dev/null || true
-          echo "[OK] Restored lib and kotlin files"
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            PKG_NAME=$(grep -oE 'package="[^"]+"' "$MANIFEST" 2>/dev/null | head -n 1 | sed -E 's/package="([^"]+)"/\1/')
-            sed -i -E 's/[[:space:]]*package="[^"]*"//g' "$MANIFEST" 2>/dev/null || echo "[ERROR] $MANIFEST | remove package failed - continuing" >> "$REPORT"
-            sed -i -E 's/[[:space:]]*android:roundIcon="[^"]*"//g' "$MANIFEST" 2>/dev/null || echo "[ERROR] $MANIFEST | remove roundIcon failed - continuing" >> "$REPORT"
-            if ! grep -q 'flutterEmbedding' "$MANIFEST" 2>/dev/null; then
-              sed -i 's|</application>|        <meta-data android:name="flutterEmbedding" android:value="2" />\n    </application>|' "$MANIFEST" 2>/dev/null || echo "[ERROR] $MANIFEST | add flutterEmbedding failed - continuing" >> "$REPORT"
-            fi
-            if [ -n "$PKG_NAME" ]; then
-              for gradle_file in android/app/build.gradle android/app/build.gradle.kts; do
-                if [ -f "$gradle_file" ]; then
-                  sed -i -E "s/namespace[[:space:]]*=[[:space:]]*\"[^\"]+\"/namespace = \"$PKG_NAME\"/g; s/namespace[[:space:]]+'[^']+'/namespace '$PKG_NAME'/g" "$gradle_file" 2>/dev/null || echo "[ERROR] $gradle_file | namespace failed - continuing" >> "$REPORT"
-                fi
-              done
-            fi
-            echo "[OK] Updated AndroidManifest.xml and Gradle namespace"
-          else
-            echo "[ERROR] AndroidManifest.xml missing - continuing"
-            echo "[ERROR] android/app/src/main/AndroidManifest.xml | Missing file" >> "$REPORT"
-          fi
-          if [ -f "lib/main.dart" ]; then
-            cat <<'PYEOF' > /tmp/patch_main.py
-          from pathlib import Path
-          import re
-
-          p = Path("lib/main.dart")
-          s = p.read_text(encoding="utf-8", errors="ignore")
-          s = s.replace("Icons.settings_input_mouse", "Icons.mouse")
-          pat = re.compile(r"\b(ElevatedButton|IconButton|TextButton|OutlinedButton|ListTile|GestureDetector|InkWell)(?:\.[A-Za-z0-9_]+)?\s*\(")
-          btns = {"ElevatedButton", "IconButton", "TextButton", "OutlinedButton"}
-          out = []
-          i = 0
-          while i < len(s):
-              m = pat.search(s, i)
-              if not m:
-                  out.append(s[i:])
-                  break
-              out.append(s[i:m.start()])
-              w = m.group(1)
-              j = m.end() - 1
-              d = 0
-              while j < len(s):
-                  if s[j] == "(":
-                      d += 1
-                  elif s[j] == ")":
-                      d -= 1
-                      if d == 0:
-                          j += 1
-                          break
-                  j += 1
-              blk = s[m.start():j]
-              if w in btns:
-                  blk = re.sub(r"\bonTap(\s*:)", r"onPressed\1", blk)
-              else:
-                  blk = re.sub(r"\bonPressed(\s*:)", r"onTap\1", blk)
-              out.append(blk)
-              i = j
-          p.write_text("".join(out), encoding="utf-8")
-          PYEOF
-            python3 /tmp/patch_main.py >/tmp/dart_fix.log 2>&1
-            if [ $? -eq 0 ]; then
-              echo "[OK] Patched button onPressed and widget onTap in lib/main.dart"
-            else
-              echo "[ERROR] Dart fix failed - continuing"
-              echo "[ERROR] lib/main.dart | $(cat /tmp/dart_fix.log | tr '\n' ' ')" >> "$REPORT"
-            fi
-          fi
-          mkdir -p test
-          printf "import 'package:flutter_test/flutter_test.dart';\n\nvoid main() {\n  testWidgets('Smoke test', (WidgetTester tester) async {\n    expect(true, isTrue);\n  });\n}\n" > test/widget_test.dart || echo "[ERROR] test/widget_test.dart | update failed - continuing" >> "$REPORT"
-          echo "[OK] Sanitized test/widget_test.dart"
-          flutter pub get >/tmp/pubget.log 2>&1
-          if [ $? -eq 0 ]; then
-            echo "[OK] flutter pub get succeeded"
-          else
-            echo "[ERROR] flutter pub get failed - continuing"
-            echo "[ERROR] pubspec.yaml | flutter pub get failed" >> "$REPORT"
-          fi
-          flutter analyze --no-pub >/tmp/analyze.log 2>&1
-          ANALYZE_EXIT=$?
-          while IFS= read -r line; do
-            case "$line" in
-              *"error •"*)
-                echo "[ERROR] $line - continuing"
-                echo "[ERROR] $line" >> "$REPORT"
-                ;;
-              *)
-                echo "$line"
-                ;;
-            esac
-          done < /tmp/analyze.log
-          BUILD_OUT="/tmp/flutter_build.log"
-          flutter build apk --release >"$BUILD_OUT" 2>&1
-          BUILD_EXIT=$?
-          while IFS= read -r line; do
-            if echo "$line" | grep -qE "(Error:|error:|FAILURE:|Exception:|AAPT:|Execution failed for task)"; then
-              echo "[ERROR] $line - continuing"
-              echo "[ERROR] $line" >> "$REPORT"
-            else
-              echo "$line"
-            fi
-          done < "$BUILD_OUT"
-          echo ""
-          echo "=========================================================="
-          if [ -s "$REPORT" ] || [ "$ANALYZE_EXIT" -ne 0 ] || [ "$BUILD_EXIT" -ne 0 ]; then
-            echo "FINAL RESULT: ERRORS FOUND (MARKED WITH [ERROR]), AND THE REST OF THE STEPS COMPLETED"
-            echo "=========================================================="
-            echo "MARKED ERRORS & LOCATIONS:"
-            if [ -s "$REPORT" ]; then
-              cat "$REPORT"
-            else
-              echo "[ERROR] Check marked lines above."
-            fi
-          else
-            echo "FINAL RESULT: ALL STEPS SUCCEEDED WITH ZERO ERRORS"
-          fi
-          echo "=========================================================="
-          exit 0
-
-      - name: Upload APK
-        if: always()
-        uses: actions/upload-artifact@v4
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install SDK packages
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - uses: gradle/actions/setup-gradle@v4
         with:
-          name: CoreLink-APK
-          path: app_src/**/build/app/outputs/flutter-apk/*.apk
+          gradle-version: '8.7'
+      - name: Build debug APK
+        working-directory: KeyMouseMapper
+        run: gradle assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: KeyMouseMapper/app/build/outputs/apk/debug/app-debug.apk
