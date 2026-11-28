@@ -71,9 +71,46 @@ jobs:
             echo "[ERROR] android/app/src/main/AndroidManifest.xml | Missing file" >> "$REPORT"
           fi
           if [ -f "lib/main.dart" ]; then
-            sed -i 's/Icons\.settings_input_mouse/Icons.mouse/g' "lib/main.dart" 2>/dev/null || true
-            sed -i -E 's/\bonTap([[:space:]]*:)/onPressed\1/g' "lib/main.dart" 2>/dev/null || echo "[ERROR] lib/main.dart | onTap fix failed - continuing" >> "$REPORT"
-            echo "[OK] Applied Dart fixes to lib/main.dart"
+            cat <<'PYEOF' > /tmp/patch_main.py
+          from pathlib import Path
+          import re
+
+          p = Path("lib/main.dart")
+          s = p.read_text(encoding="utf-8", errors="ignore")
+          s = s.replace("Icons.settings_input_mouse", "Icons.mouse")
+          pat = re.compile(r"\b(ListTile|GestureDetector|InkWell)\s*\(")
+          out = []
+          i = 0
+          while i < len(s):
+              m = pat.search(s, i)
+              if not m:
+                  out.append(s[i:])
+                  break
+              out.append(s[i:m.start()])
+              j = m.end() - 1
+              d = 0
+              while j < len(s):
+                  if s[j] == "(":
+                      d += 1
+                  elif s[j] == ")":
+                      d -= 1
+                      if d == 0:
+                          j += 1
+                          break
+                  j += 1
+              blk = s[m.start():j]
+              blk = re.sub(r"\bonPressed(\s*:)", r"onTap\1", blk)
+              out.append(blk)
+              i = j
+          p.write_text("".join(out), encoding="utf-8")
+          PYEOF
+            python3 /tmp/patch_main.py >/tmp/dart_fix.log 2>&1
+            if [ $? -eq 0 ]; then
+              echo "[OK] Patched ListTile/GestureDetector onPressed -> onTap in lib/main.dart"
+            else
+              echo "[ERROR] Dart fix failed - continuing"
+              echo "[ERROR] lib/main.dart | $(cat /tmp/dart_fix.log | tr '\n' ' ')" >> "$REPORT"
+            fi
           fi
           mkdir -p test
           printf "import 'package:flutter_test/flutter_test.dart';\n\nvoid main() {\n  testWidgets('Smoke test', (WidgetTester tester) async {\n    expect(true, isTrue);\n  });\n}\n" > test/widget_test.dart || echo "[ERROR] test/widget_test.dart | update failed - continuing" >> "$REPORT"
@@ -132,4 +169,3 @@ jobs:
         with:
           name: CoreLink-APK
           path: app_src/**/build/app/outputs/flutter-apk/*.apk
- 
